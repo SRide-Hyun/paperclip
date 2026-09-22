@@ -12,6 +12,7 @@ No agent defaults or saved model selections are migrated.
 | Grok Build | Add Grok 4.7, 4.6, and 4.5. Offer Extra High for 4.7/4.6. Save edited effort as `reasoningEffort`, which the runtime consumes. Keep `grok-build` as the sentinel that lets the CLI choose its default. |
 | Gemini CLI | Add Flash 3.8, 3.7, 3.6, 3.5, Flash Lite 3.5/3.1, and 3 Flash Preview. Remove the retired Gemini 2.0 choices. Keep Auto and the existing 3.1 Pro and 2.5 choices. |
 | Cursor | Add the current documented fallback IDs for Composer 2.5, Opus 5.5, Fable 5.1, Sonnet 5, GPT-5.6 Sol/Terra/Luna, Gemini 3.8 Flash, Muse Spark 1.3, and Grok 4.7/4.6/4.5. Runtime model discovery remains available. |
+| OpenCode | Refresh the static fallback used by remote environments with GPT-6 and GPT-5.6 families, current Claude models, Gemini 3.8 Flash, and Grok 4.7. |
 | Kimi Code | Add K3 256K. Relabel `kimi-for-coding` as K2.8 Preview, which replaced K2.7 under the same ID. Forward CLI effort for K2.8 Preview and both K3 variants. |
 
 ## Sources and verification
@@ -48,7 +49,12 @@ No agent defaults or saved model selections are migrated.
 
 ## Other adapters and restricted models
 
-OpenCode and Pi already discover models from their runtime or provider registry.
+OpenCode discovers local models, but remote environment routes use its static
+fallback catalog. All twelve added provider-qualified IDs were also present in
+the installed OpenCode registry. [OpenCode model configuration](https://opencode.ai/docs/models/)
+documents its `provider/model` format and provider registry.
+
+Pi already discovers models from its runtime or provider registry.
 Hermes and OpenClaw accept provider configuration without a curated model list.
 Cursor Cloud obtains its account's model list from Cursor. These paths do not
 need a static entry per upstream release. Local OpenCode discovery returned
