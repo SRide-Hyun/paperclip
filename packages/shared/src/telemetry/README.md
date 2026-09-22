@@ -110,7 +110,8 @@ data paths document their own contract in their own file:
 
 ## Connector Events
 
-The three `connector.*` events record tool-connector lifecycle and usage for
+The three connection events (`connection.created`, `connection.updated`,
+`connection.invoked`) record tool-connector lifecycle and usage for
 connections whose `connection_purpose` is `tool`. The generated contract
 remains the authority for their exact dimensions and optionality. These
 durable rules are not expressible in the generated `string`/`number` types:
@@ -123,11 +124,12 @@ durable rules are not expressible in the generated `string`/`number` types:
   child connections persist a `toolkitSlug` but no catalog
   `sourceTemplateKey`, so they report `custom` too; raw toolkit or provider
   strings are never exported.
-- `connector.connection_created` and `connector.connection_updated` are
+- `connection.created` and `connection.updated` are
   emitted only after the lifecycle write commits, from returned rows. Writes
   that affect no rows and no-op changes do not emit.
-- `connector.invocation_completed` is emitted when an invocation reaches a
-  terminal status — best-effort, so duplicate and lost events are possible
+- `connection.invoked` is emitted when an invocation reaches a
+  terminal status: it records completed invocation attempts and their terminal
+  status, never invocation starts — best-effort, so duplicate and lost events are possible
   (see the delivery rule below); do not read it as exactly one event per
   invocation. Its `origin` dimension separates setup tests (the Apps →
   Test tab) from agent and user calls using the durable test-origin columns.
@@ -138,8 +140,8 @@ durable rules are not expressible in the generated `string`/`number` types:
   bookkeeping itself fails, and a crash between the product write and emission
   loses that event. Do not treat these events as an exactly-once ledger.
 
-Use `trackConnectorConnectionCreated()`, `trackConnectorConnectionUpdated()`,
-and `trackConnectorInvocationCompleted()` from `events.ts` to emit these
+Use `trackConnectionCreated()`, `trackConnectionUpdated()`,
+and `trackConnectionInvoked()` from `events.ts` to emit these
 events.
 
 ## Dimension Values

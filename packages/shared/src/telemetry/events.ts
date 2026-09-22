@@ -153,18 +153,18 @@ export function trackAgentTaskRun(
   });
 }
 
-export function trackConnectorConnectionCreated(
+export function trackConnectionCreated(
   client: TelemetryClient,
   dims: {
     connector_key: string;
-    transport: RawDimension<EventDimensionsMap["connector.connection_created"]["transport"]>;
-    auth_kind: RawDimension<EventDimensionsMap["connector.connection_created"]["auth_kind"]>;
-    setup_flow: RawDimension<EventDimensionsMap["connector.connection_created"]["setup_flow"]>;
-    status: RawDimension<EventDimensionsMap["connector.connection_created"]["status"]>;
+    transport: RawDimension<EventDimensionsMap["connection.created"]["transport"]>;
+    auth_kind: RawDimension<EventDimensionsMap["connection.created"]["auth_kind"]>;
+    setup_flow: RawDimension<EventDimensionsMap["connection.created"]["setup_flow"]>;
+    status: RawDimension<EventDimensionsMap["connection.created"]["status"]>;
     enabled: boolean;
   },
 ): void {
-  client.track("connector.connection_created", {
+  client.track("connection.created", {
     connector_key: dims.connector_key,
     transport: asEventDimension(dims.transport),
     auth_kind: asEventDimension(dims.auth_kind),
@@ -174,20 +174,20 @@ export function trackConnectorConnectionCreated(
   });
 }
 
-export function trackConnectorConnectionUpdated(
+export function trackConnectionUpdated(
   client: TelemetryClient,
   dims: {
     connector_key: string;
-    transport: RawDimension<EventDimensionsMap["connector.connection_updated"]["transport"]>;
-    auth_kind: RawDimension<EventDimensionsMap["connector.connection_updated"]["auth_kind"]>;
-    change_source: RawDimension<EventDimensionsMap["connector.connection_updated"]["change_source"]>;
-    previous_status: RawDimension<EventDimensionsMap["connector.connection_updated"]["previous_status"]>;
-    status: RawDimension<EventDimensionsMap["connector.connection_updated"]["status"]>;
+    transport: RawDimension<EventDimensionsMap["connection.updated"]["transport"]>;
+    auth_kind: RawDimension<EventDimensionsMap["connection.updated"]["auth_kind"]>;
+    change_source: RawDimension<EventDimensionsMap["connection.updated"]["change_source"]>;
+    previous_status: RawDimension<EventDimensionsMap["connection.updated"]["previous_status"]>;
+    status: RawDimension<EventDimensionsMap["connection.updated"]["status"]>;
     previous_enabled: boolean;
     enabled: boolean;
   },
 ): void {
-  client.track("connector.connection_updated", {
+  client.track("connection.updated", {
     connector_key: dims.connector_key,
     transport: asEventDimension(dims.transport),
     auth_kind: asEventDimension(dims.auth_kind),
@@ -199,17 +199,17 @@ export function trackConnectorConnectionUpdated(
   });
 }
 
-export function trackConnectorInvocationCompleted(
+export function trackConnectionInvoked(
   client: TelemetryClient,
   dims: {
     connector_key: string;
-    transport: RawDimension<EventDimensionsMap["connector.invocation_completed"]["transport"]>;
-    status: RawDimension<EventDimensionsMap["connector.invocation_completed"]["status"]>;
-    origin: RawDimension<EventDimensionsMap["connector.invocation_completed"]["origin"]>;
+    transport: RawDimension<EventDimensionsMap["connection.invoked"]["transport"]>;
+    status: RawDimension<EventDimensionsMap["connection.invoked"]["status"]>;
+    origin: RawDimension<EventDimensionsMap["connection.invoked"]["origin"]>;
     duration_seconds?: number;
   },
 ): void {
-  client.track("connector.invocation_completed", {
+  client.track("connection.invoked", {
     connector_key: dims.connector_key,
     transport: asEventDimension(dims.transport),
     status: asEventDimension(dims.status),

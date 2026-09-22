@@ -1,8 +1,8 @@
 import { connectionPurposeTransportSchema } from "@paperclipai/shared";
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
 import {
-  emitConnectorConnectionCreated,
-  emitConnectorConnectionUpdated,
+  emitConnectionCreated,
+  emitConnectionUpdated,
 } from "./connector-telemetry.js";
 import { canBrowseProjectRepositoryGrant, mergeProjectRepository } from "./project-repositories.js";
 import { captureRunIdentity } from "./run-identity.js";
@@ -6429,7 +6429,7 @@ export function toolAccessService(
 
       return { connection: updatedConnection, applicationArchived };
     });
-    emitConnectorConnectionUpdated(archived.connection, connection, "archive");
+    emitConnectionUpdated(archived.connection, connection, "archive");
 
     // Only now, with every access path closed, revoke the credentials. Each
     // `secrets.remove` marks the row deleted before it calls the provider, so a
@@ -7123,7 +7123,7 @@ export function toolAccessService(
         .returning();
       // Emit only what the database confirmed: a concurrently deleted child
       // returns no row and must not report a transition it never committed.
-      if (updated) emitConnectorConnectionUpdated(updated, child, "composio_sync");
+      if (updated) emitConnectionUpdated(updated, child, "composio_sync");
     }
   }
 
@@ -7185,7 +7185,7 @@ export function toolAccessService(
         .returning();
       // Emit only what the database confirmed: a concurrently deleted child
       // returns no row and must not report a transition it never committed.
-      if (updated) emitConnectorConnectionUpdated(updated, child, "composio_sync");
+      if (updated) emitConnectionUpdated(updated, child, "composio_sync");
     }
   }
 
@@ -7280,7 +7280,7 @@ export function toolAccessService(
         toolkitSlug: account.toolkit.slug,
       },
     });
-    emitConnectorConnectionCreated(created, "composio_sync");
+    emitConnectionCreated(created, "composio_sync");
     return created;
   }
 
@@ -8466,7 +8466,7 @@ export function toolAccessService(
       await ensureDefaultOrganizationGrant(updated);
       await syncCredentialBindings(updated);
       await ensureRuntimeSlot(updated);
-      emitConnectorConnectionUpdated(updated, existing, "example");
+      emitConnectionUpdated(updated, existing, "example");
       return { row: updated, created: false };
     }
     const connectionId = randomUUID();
@@ -8495,7 +8495,7 @@ export function toolAccessService(
     await ensureDefaultOrganizationGrant(created);
     await syncCredentialBindings(created);
     await ensureRuntimeSlot(created);
-    emitConnectorConnectionCreated(created, "example");
+    emitConnectionCreated(created, "example");
     return { row: created, created: true };
   }
 
@@ -10840,7 +10840,7 @@ export function toolAccessService(
       .returning();
     if (updated) {
       await syncCredentialBindings(updated);
-      emitConnectorConnectionUpdated(updated, connection, "credential_refresh");
+      emitConnectionUpdated(updated, connection, "credential_refresh");
     }
     return updated ?? null;
   }
@@ -11729,7 +11729,7 @@ export function toolAccessService(
                 )
                 .returning();
               await syncCredentialBindings(reauthorizationRequired);
-              emitConnectorConnectionUpdated(
+              emitConnectionUpdated(
                 reauthorizationRequired,
                 latestConnection,
                 "credential_refresh",
@@ -13157,13 +13157,13 @@ export function toolAccessService(
           .returning();
       }
       if (revivedConnectionPrevious) {
-        emitConnectorConnectionUpdated(
+        emitConnectionUpdated(
           connectionRow,
           revivedConnectionPrevious,
-          "gallery_setup",
+          "gallery",
         );
       } else {
-        emitConnectorConnectionCreated(connectionRow, "gallery");
+        emitConnectionCreated(connectionRow, "gallery");
       }
       if (personalIdentityUserId) {
         // "Just me" (PAP-17835 seam #4). The credential is committed straight to
@@ -14160,10 +14160,10 @@ export function toolAccessService(
 
       return { profileId, profileBindings, policies, updatedConnection };
     });
-    emitConnectorConnectionUpdated(
+    emitConnectionUpdated(
       transactionResult.updatedConnection,
       connection,
-      "gallery_setup",
+      "gallery",
     );
 
     const details = await profileDetails(
@@ -15890,7 +15890,7 @@ export function toolAccessService(
         ),
       )
       .returning();
-    emitConnectorConnectionUpdated(
+    emitConnectionUpdated(
       connection,
       preActivationLifecycle,
       "oauth_callback",
@@ -16269,7 +16269,7 @@ export function toolAccessService(
           tx,
         );
       });
-      emitConnectorConnectionUpdated(
+      emitConnectionUpdated(
         connection,
         preCallbackLifecycle,
         "oauth_callback",
@@ -16490,7 +16490,7 @@ export function toolAccessService(
       await ensureDefaultOrganizationGrant(connection, tx);
       await syncCredentialBindings(connection, [], tx);
     });
-    emitConnectorConnectionUpdated(
+    emitConnectionUpdated(
       connection,
       preCallbackLifecycle,
       "oauth_callback",
@@ -17786,7 +17786,7 @@ export function toolAccessService(
           await disableComposioChildren(row);
         else await restoreComposioChildren(row);
       }
-      emitConnectorConnectionCreated(row, "api");
+      emitConnectionCreated(row, "api");
       return toConnection(row);
     },
 
@@ -18681,7 +18681,7 @@ export function toolAccessService(
         if (row.enabled) await restoreComposioChildren(row);
         else await disableComposioChildren(row);
       }
-      emitConnectorConnectionUpdated(row, existing, "update_api");
+      emitConnectionUpdated(row, existing, "api");
       return toConnection(row);
     },
 

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TelemetryClient } from "./client.js";
 import { resolveTelemetryConfig } from "./config.js";
 import {
-  trackConnectorConnectionCreated,
-  trackConnectorConnectionUpdated,
-  trackConnectorInvocationCompleted,
+  trackConnectionCreated,
+  trackConnectionUpdated,
+  trackConnectionInvoked,
 } from "./events.js";
 import type { TelemetryState } from "./types.js";
 
@@ -29,7 +29,7 @@ function makeClient(config?: { enabled?: boolean }) {
 }
 
 function trackAllConnectorEvents(client: TelemetryClient) {
-  trackConnectorConnectionCreated(client, {
+  trackConnectionCreated(client, {
     connector_key: "github",
     transport: "mcp_remote",
     auth_kind: "oauth",
@@ -37,17 +37,17 @@ function trackAllConnectorEvents(client: TelemetryClient) {
     status: "active",
     enabled: true,
   });
-  trackConnectorConnectionUpdated(client, {
+  trackConnectionUpdated(client, {
     connector_key: "github",
     transport: "mcp_remote",
     auth_kind: "oauth",
-    change_source: "update_api",
+    change_source: "api",
     previous_status: "draft",
     status: "active",
     previous_enabled: false,
     enabled: true,
   });
-  trackConnectorInvocationCompleted(client, {
+  trackConnectionInvoked(client, {
     connector_key: "github",
     transport: "mcp_remote",
     status: "succeeded",
@@ -75,7 +75,7 @@ describe("registered connector events against the real TelemetryClient", () => {
     );
     expect(body.events).toEqual([
       expect.objectContaining({
-        name: "connector.connection_created",
+        name: "connection.created",
         dimensions: {
           connector_key: "github",
           transport: "mcp_remote",
@@ -86,12 +86,12 @@ describe("registered connector events against the real TelemetryClient", () => {
         },
       }),
       expect.objectContaining({
-        name: "connector.connection_updated",
+        name: "connection.updated",
         dimensions: {
           connector_key: "github",
           transport: "mcp_remote",
           auth_kind: "oauth",
-          change_source: "update_api",
+          change_source: "api",
           previous_status: "draft",
           status: "active",
           previous_enabled: false,
@@ -99,7 +99,7 @@ describe("registered connector events against the real TelemetryClient", () => {
         },
       }),
       expect.objectContaining({
-        name: "connector.invocation_completed",
+        name: "connection.invoked",
         dimensions: {
           connector_key: "github",
           transport: "mcp_remote",
@@ -113,9 +113,9 @@ describe("registered connector events against the real TelemetryClient", () => {
 
   it("reports the three connector event names as registered", () => {
     const { client } = makeClient();
-    expect(client.isRegisteredEventName("connector.connection_created")).toBe(true);
-    expect(client.isRegisteredEventName("connector.connection_updated")).toBe(true);
-    expect(client.isRegisteredEventName("connector.invocation_completed")).toBe(true);
+    expect(client.isRegisteredEventName("connection.created")).toBe(true);
+    expect(client.isRegisteredEventName("connection.updated")).toBe(true);
+    expect(client.isRegisteredEventName("connection.invoked")).toBe(true);
     expect(client.isRegisteredEventName("project.created")).toBe(true);
   });
 
