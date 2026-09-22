@@ -63,18 +63,18 @@ describe("buildCodexLocalConfig", () => {
     });
   });
 
-  it.each(["gpt-6-astra", "gpt-6-sol"])("persists the exact %s model and supported controls", (model) => {
+  it.each([["gpt-6-astra", "ultra"], ["gpt-6-sol", "ultra"], ["gpt-6-luna", "max"], ["gpt-5.6-sol", "ultra"], ["gpt-5.6-terra", "ultra"], ["gpt-5.6-luna", "max"]])("persists the exact %s model and supported controls", (model, effort) => {
     const config = buildCodexLocalConfig(
       makeValues({
         model,
-        thinkingEffort: "ultra",
+        thinkingEffort: effort,
         fastMode: true,
       }),
     );
 
     expect(config).toMatchObject({
       model,
-      modelReasoningEffort: "ultra",
+      modelReasoningEffort: effort,
       fastMode: true,
     });
   });

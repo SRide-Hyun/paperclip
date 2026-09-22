@@ -9,10 +9,10 @@ describe("buildCodexExecArgs", () => {
     if (resumeSessionId) expect(args.slice(-3)).toEqual(["resume", resumeSessionId, "-"]);
   });
 
-  it.each(["gpt-6-astra", "gpt-6-sol"])("forwards %s, its ultra reasoning effort, and fast mode", (model) => {
+  it.each([["gpt-6-astra", "ultra"], ["gpt-6-sol", "ultra"], ["gpt-6-luna", "max"], ["gpt-5.6-sol", "ultra"], ["gpt-5.6-terra", "ultra"], ["gpt-5.6-luna", "max"]])("forwards %s, its supported reasoning effort, and fast mode", (model, effort) => {
     const result = buildCodexExecArgs({
       model,
-      modelReasoningEffort: "ultra",
+      modelReasoningEffort: effort,
       fastMode: true,
     });
 
@@ -26,7 +26,7 @@ describe("buildCodexExecArgs", () => {
       "--model",
       model,
       "-c",
-      'model_reasoning_effort="ultra"',
+      `model_reasoning_effort="${effort}"`,
       "-c",
       'service_tier="fast"',
       "-c",
@@ -148,7 +148,7 @@ describe("buildCodexExecArgs", () => {
     expect(result.fastModeRequested).toBe(true);
     expect(result.fastModeApplied).toBe(false);
     expect(result.fastModeIgnoredReason).toContain(
-      "currently only supported on gpt-6-astra, gpt-6-sol, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4 or manually configured model IDs",
+      "currently only supported on gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4 or manually configured model IDs",
     );
     expect(result.args).toEqual([
       "exec",

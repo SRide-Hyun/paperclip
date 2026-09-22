@@ -159,11 +159,40 @@ describe("adapter model listing", () => {
 
     const models = await listAdapterModels("claude_local");
 
-    // The Bedrock default (first entry) is unchanged.
-    expect(models[0]?.id).toBe("us.anthropic.claude-opus-4-8-v1");
-    expect(models.some((model) => model.id === "us.anthropic.claude-fable-5-1")).toBe(true);
+    // Keep Opus 4.8 first, using its documented dateless Bedrock ID.
+    expect(models[0]?.id).toBe("us.anthropic.claude-opus-4-8");
+    expect(models.map((model) => model.id)).toEqual(expect.arrayContaining([
+      "us.anthropic.claude-opus-5-5", "us.anthropic.claude-opus-5", "us.anthropic.claude-sonnet-5",
+      "us.anthropic.claude-fable-5-1", "us.anthropic.claude-opus-4-7", "us.anthropic.claude-sonnet-4-6",
+    ]));
+    expect(models.map((model) => model.id)).not.toEqual(expect.arrayContaining(["us.anthropic.claude-opus-4-8-v1"]));
     expect(models.some((model) => model.id === "claude-fable-5-1")).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["gemini_local", ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]],
+    ["grok_local", ["grok-build", "grok-4.7", "grok-4.6", "grok-4.5"]],
+    ["kimi_local", ["kimi-code/kimi-for-coding", "kimi-code/k3", "kimi-code/k3-256k"]],
+  ])("lists current %s models without a provider login", async (adapter, expectedIds) => {
+    const models = await listAdapterModels(adapter as string);
+    expect(models.map((model) => model.id)).toEqual(expect.arrayContaining(expectedIds as string[]));
+    expect(new Set(models.map((model) => model.id)).size).toBe(models.length);
+    if (adapter === "gemini_local") {
+      expect(models.some((model) => model.id.startsWith("gemini-2.0-"))).toBe(false);
+    }
+    if (adapter === "kimi_local") {
+      expect(models).toContainEqual({ id: "kimi-code/kimi-for-coding", label: "K2.8 Preview" });
+    }
+  });
+
+  it("includes current Cursor fallbacks when runtime discovery is unavailable", async () => {
+    setCursorModelsRunnerForTests(() => ({ status: 1, stdout: "", stderr: "", hasError: true }));
+    const models = await listAdapterModels("cursor");
+    expect(models.map((model) => model.id)).toEqual(expect.arrayContaining([
+      "composer-2.5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5",
+      "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "grok-4.7", "gemini-3.8-flash", "muse-spark-1.3",
+    ]));
   });
 
   it("loads codex models dynamically and merges fallback options", async () => {

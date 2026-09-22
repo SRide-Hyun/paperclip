@@ -508,15 +508,15 @@ describe("codex_local ACP lane", () => {
     });
   });
 
-  it.each(["gpt-6-astra", "gpt-6-sol"])("forwards %s controls to the ACPX Codex target", (model) => {
+  it.each([["gpt-6-astra", "ultra"], ["gpt-6-sol", "ultra"], ["gpt-6-luna", "max"], ["gpt-5.6-sol", "ultra"], ["gpt-5.6-terra", "ultra"], ["gpt-5.6-luna", "max"]])("forwards %s controls to the ACPX Codex target", (model, effort) => {
     expect(buildCodexAcpConfig({
       engine: "acp",
       model,
-      modelReasoningEffort: "ultra",
+      modelReasoningEffort: effort,
       fastMode: true,
     })).toMatchObject({
       model,
-      modelReasoningEffort: "ultra",
+      modelReasoningEffort: effort,
       fastMode: true,
     });
   });
