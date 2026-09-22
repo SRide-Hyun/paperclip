@@ -71,6 +71,7 @@ describe("adapter model listing", () => {
     expect(models.some((model) => model.id === "claude-mythos-5")).toBe(true);
     // Opus 5 is a current GA flagship and must be offered even when live discovery is unavailable.
     expect(models.some((model) => model.id === "claude-opus-5")).toBe(true);
+    expect(models).toContainEqual({ id: "claude-opus-5-5", label: "Claude Opus 5.5" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -93,6 +94,7 @@ describe("adapter model listing", () => {
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "claude-opus-4-8-20260529")).toBe(true);
     expect(first.some((model) => model.id === "claude-opus-4-8")).toBe(true);
+    expect(first.some((model) => model.id === "claude-opus-5-5")).toBe(true);
   });
 
   it("refreshes cached claude models on demand", async () => {
@@ -131,18 +133,21 @@ describe("adapter model listing", () => {
     expect(models).toEqual(claudeFallbackModels);
   });
 
-  it("does not duplicate claude-fable-5-1 when discovery returns the identical ID", async () => {
+  it.each([
+    ["claude-fable-5-1", "Claude Fable 5.1"],
+    ["claude-opus-5-5", "Claude Opus 5.5"],
+  ])("does not duplicate %s when discovery returns the identical ID", async (id, displayName) => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({
-        data: [{ id: "claude-fable-5-1", display_name: "Claude Fable 5.1" }],
+        data: [{ id, display_name: displayName }],
       }),
     } as Response);
 
     const models = await listAdapterModels("claude_local");
 
-    expect(models.filter((model) => model.id === "claude-fable-5-1")).toHaveLength(1);
+    expect(models.filter((model) => model.id === id)).toEqual([{ id, label: displayName }]);
     // Curated fallbacks discovery did not return are still merged in.
     expect(models.some((model) => model.id === "claude-fable-5")).toBe(true);
     expect(models.some((model) => model.id === "claude-opus-4-8")).toBe(true);
