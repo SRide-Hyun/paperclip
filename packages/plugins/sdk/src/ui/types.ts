@@ -16,6 +16,7 @@
 
 import type {
   AnchorHTMLAttributes,
+  ReactNode,
   MouseEvent as ReactMouseEvent,
 } from "react";
 import type {
@@ -267,6 +268,24 @@ export interface PluginDetailTabProps {
   context: PluginHostContext & {
     entityId: string;
     entityType: string;
+  };
+}
+
+/** A single installed contribution replaces the organization menu. The host
+ * retains its built-in menu while loading, on ambiguity, or on render failure.
+ * These values/callbacks are presentation context, never authorization. */
+export interface PluginOrganizationSwitcherProps {
+  organizationSwitcher: {
+    currentCompany: { name: string; logoUrl: string | null } | null;
+    collapsed: boolean;
+    open: boolean;
+    onOpenChange(open: boolean): void;
+    /** Close mobile navigation before leaving the current organization. */
+    onNavigate(): void;
+    /** Host-owned logout preserves its session/cache invalidation behavior. */
+    onSignOut(): void;
+    signingOut: boolean;
+    renderIcon(name: string, logoUrl: string | null, inMenu: boolean): ReactNode;
   };
 }
 
