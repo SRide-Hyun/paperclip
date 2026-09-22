@@ -1339,7 +1339,7 @@ describe("instance settings routes", () => {
         { id: "company-sibling-paused", status: "paused" },
         { id: "company-sibling-archived", status: "archived" },
       ];
-      const app = await createApp(memberActor);
+      const app = await createApp(adminActor);
 
       const res = await request(app).get("/api/instance/lifecycle");
 
@@ -1354,7 +1354,7 @@ describe("instance settings routes", () => {
 
     it("reports a missing primary company without failing", async () => {
       mockCompanyRows = [{ id: "company-other", status: "active" }];
-      const app = await createApp(memberActor);
+      const app = await createApp(adminActor);
 
       const res = await request(app).get("/api/instance/lifecycle");
 
@@ -1362,10 +1362,19 @@ describe("instance settings routes", () => {
       expect(res.body.primaryCompanyStatus).toBe("missing");
     });
 
+    it("hides the cross-company lifecycle summary from non-admin board members", async () => {
+      mockCompanyRows = [{ id: primaryId, status: "archived" }];
+      const app = await createApp(memberActor);
+
+      const res = await request(app).get("/api/instance/lifecycle");
+
+      expect(res.status).toBe(403);
+    });
+
     it("answers 404 when the instance is not cloud-managed", async () => {
       delete process.env.PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN;
       delete process.env.PAPERCLIP_CLOUD_STACK_ID;
-      const readRes = await request(await createApp(memberActor)).get("/api/instance/lifecycle");
+      const readRes = await request(await createApp(adminActor)).get("/api/instance/lifecycle");
       expect(readRes.status).toBe(404);
 
       // The admin gate runs first, so prove the 404 with an admin actor.
@@ -1391,6 +1400,30 @@ describe("instance settings routes", () => {
         primaryId,
         { status: "active" },
         { actorType: "system", actorId: "paperclip-cloud", agentId: null, runId: null },
+      );
+    });
+
+    it("attributes a human admin's unarchive to that admin, not to Cloud", async () => {
+      mockCompanyService.getById.mockResolvedValue({ id: "", status: "archived" });
+      mockCompanyService.update.mockImplementation(async (id: string) => ({ id, status: "active" }));
+      const humanAdmin = {
+        type: "board",
+        userId: "human-admin",
+        source: "session",
+        isInstanceAdmin: true,
+        companyIds: ["company-1"],
+      };
+      const app = await createApp(humanAdmin);
+
+      const res = await request(app)
+        .post("/api/instance/lifecycle/unarchive-primary")
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(mockCompanyService.update).toHaveBeenCalledWith(
+        primaryId,
+        { status: "active" },
+        expect.objectContaining({ actorType: "user", actorId: "human-admin" }),
       );
     });
 

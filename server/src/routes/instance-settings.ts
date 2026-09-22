@@ -412,10 +412,12 @@ export function instanceSettingsRoutes(db: Db) {
   // doorbell by asking this instance what the Cloud-pinned primary
   // company's status actually is, so the shared-token doorbell can stay a
   // hint (see cloud-lifecycle-sync.ts). Reached by the harness with a
-  // `lifecycle:read` Cloud control assertion; board members may read it
-  // too — it only restates companies the boards list already shows.
+  // `lifecycle:read` Cloud control assertion. Instance-admin only for
+  // humans: the response summarizes lifecycle state across EVERY company
+  // on the instance, which a board member scoped to one company must not
+  // be able to infer.
   router.get("/instance/lifecycle", async (req, res) => {
-    assertBoardOrgAccess(req);
+    assertCanManageInstanceSettings(req);
     const stackId = getCloudStackContext()?.stackId;
     if (!stackId) {
       res.status(404).json({ error: "not_cloud_managed" });
@@ -460,14 +462,22 @@ export function instanceSettingsRoutes(db: Db) {
       res.json({ status: existing.status, changed: false });
       return;
     }
-    // The caller is the harness's synthetic cloud_control actor (or an
-    // instance admin); the activity log attributes the unarchive to the
-    // Cloud restore rather than to a human account.
-    const updated = await companySvc.update(
-      primaryCompanyId,
-      { status: "active" },
-      { actorType: "system", actorId: "paperclip-cloud", agentId: null, runId: null },
-    );
+    // Attribution: only the harness's synthetic cloud_control actor logs
+    // as the Cloud system identity; a human instance admin calling this
+    // endpoint is recorded as themselves, exactly like an in-product
+    // unarchive.
+    const actor = req.actor.source === "cloud_control"
+      ? { actorType: "system" as const, actorId: "paperclip-cloud", agentId: null, runId: null }
+      : (() => {
+          const info = getActorInfo(req);
+          return {
+            actorType: info.actorType,
+            actorId: info.actorId,
+            agentId: info.agentId,
+            runId: info.runId,
+          };
+        })();
+    const updated = await companySvc.update(primaryCompanyId, { status: "active" }, actor);
     res.json({ status: updated?.status ?? "active", changed: true });
   });
 

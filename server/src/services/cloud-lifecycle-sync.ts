@@ -59,7 +59,16 @@ export async function notifyCloudOfPrimaryCompanyLifecycleChange(
   if (!context?.stackId || !context.cloudOrigin || !token) return;
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  // Unreferenced timers: this detached retry loop must never hold the
+  // process open — a shutdown mid-retry just drops the ring, which the
+  // harness's verified read-back model tolerates by design.
+  const sleep =
+    options.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+      }));
   const url = `${context.cloudOrigin}/v1/tenant/lifecycle-changed`;
 
   for (let attempt = 0; ; attempt += 1) {
