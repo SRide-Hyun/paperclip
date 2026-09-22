@@ -36,6 +36,7 @@ import {
 } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
 import { isCloudManagedInstance } from "./cloud-instance.js";
+import { notifyCloudOfPrimaryCompanyLifecycleChange } from "./cloud-lifecycle-sync.js";
 import {
   MAX_ISSUE_PREFIX_ATTEMPTS,
   deriveIssuePrefixBase,
@@ -442,6 +443,7 @@ export function companyService(db: Db) {
           company: enrichCompany(hydrated),
           reactivated: shouldLogReactivation ? { agentsRestored } : null,
           archiveCascade,
+          unarchived: willReactivate && existing.status === "archived",
           issuePrefixRederived,
         };
       });
@@ -478,6 +480,12 @@ export function companyService(db: Db) {
       }
       if (result.archiveCascade) {
         await finalizeArchive(id, actor, result.archiveCascade);
+      }
+      // Post-commit, fire-and-forget: a Cloud-pinned primary company that
+      // crossed the archived boundary (either direction) rings the harness
+      // so the stack itself can converge. Never blocks or fails the update.
+      if (result.archiveCascade || result.unarchived) {
+        void notifyCloudOfPrimaryCompanyLifecycleChange(id);
       }
       return result.company;
     },
@@ -516,6 +524,8 @@ export function companyService(db: Db) {
 
       if (result.cascade) {
         await finalizeArchive(id, actor, result.cascade);
+        // Same post-commit doorbell as the status-patch path above.
+        void notifyCloudOfPrimaryCompanyLifecycleChange(id);
       }
 
       return result.company;

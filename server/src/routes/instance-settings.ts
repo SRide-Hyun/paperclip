@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import type { Db } from "@paperclipai/db";
+import { companies, type Db } from "@paperclipai/db";
 import {
   patchInstanceSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
@@ -7,11 +7,16 @@ import {
   startTaskDrainRequestSchema,
 } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
-import { isCloudManagedInstance } from "../services/cloud-instance.js";
+import {
+  cloudTenantPrimaryCompanyId,
+  getCloudStackContext,
+  isCloudManagedInstance,
+} from "../services/cloud-instance.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
+  companyService,
   heartbeatService,
   instanceSettingsService,
   logActivity,
@@ -401,6 +406,69 @@ export function instanceSettingsRoutes(db: Db) {
       return wasActive;
     });
     res.json({ wasActive });
+  });
+
+  // Cloud lifecycle read-back: the harness answers a tenant's archive
+  // doorbell by asking this instance what the Cloud-pinned primary
+  // company's status actually is, so the shared-token doorbell can stay a
+  // hint (see cloud-lifecycle-sync.ts). Reached by the harness with a
+  // `lifecycle:read` Cloud control assertion; board members may read it
+  // too — it only restates companies the boards list already shows.
+  router.get("/instance/lifecycle", async (req, res) => {
+    assertBoardOrgAccess(req);
+    const stackId = getCloudStackContext()?.stackId;
+    if (!stackId) {
+      res.status(404).json({ error: "not_cloud_managed" });
+      return;
+    }
+    const primaryCompanyId = cloudTenantPrimaryCompanyId(stackId);
+    const rows = await db
+      .select({ id: companies.id, status: companies.status })
+      .from(companies);
+    const primary = rows.find((row) => row.id === primaryCompanyId);
+    res.json({
+      primaryCompanyId,
+      primaryCompanyStatus: primary?.status ?? "missing",
+      otherUnarchivedCompanyCount: rows.filter(
+        (row) => row.id !== primaryCompanyId && row.status !== "archived",
+      ).length,
+    });
+  });
+
+  // Cloud restore counterpart: "Resume organization" on a stack that was
+  // archived because its primary company was archived must bring the
+  // company back too, or the tenant's next doorbell would re-archive the
+  // stack the customer just resumed. Idempotent: a primary company that is
+  // not archived reports changed:false. Reached by the harness with a
+  // `lifecycle:unarchive-primary` control assertion; instance admins hold
+  // the same power through PATCH /api/companies/:id already.
+  router.post("/instance/lifecycle/unarchive-primary", async (req, res) => {
+    assertCanManageInstanceSettings(req);
+    const stackId = getCloudStackContext()?.stackId;
+    if (!stackId) {
+      res.status(404).json({ error: "not_cloud_managed" });
+      return;
+    }
+    const primaryCompanyId = cloudTenantPrimaryCompanyId(stackId);
+    const companySvc = companyService(db);
+    const existing = await companySvc.getById(primaryCompanyId);
+    if (!existing) {
+      res.status(404).json({ error: "primary_company_not_found" });
+      return;
+    }
+    if (existing.status !== "archived") {
+      res.json({ status: existing.status, changed: false });
+      return;
+    }
+    // The caller is the harness's synthetic cloud_control actor (or an
+    // instance admin); the activity log attributes the unarchive to the
+    // Cloud restore rather than to a human account.
+    const updated = await companySvc.update(
+      primaryCompanyId,
+      { status: "active" },
+      { actorType: "system", actorId: "paperclip-cloud", agentId: null, runId: null },
+    );
+    res.json({ status: updated?.status ?? "active", changed: true });
   });
 
   return router;
