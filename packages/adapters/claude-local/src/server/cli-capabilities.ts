@@ -41,6 +41,7 @@ function cacheKeyForTarget(command: string, target: AdapterExecutionTarget | nul
 }
 
 export function minimumClaudeCliVersionForModel(model: string): string | null {
+  if (model.trim() === "claude-opus-5-5") return "2.1.280";
   return CLAUDE_FABLE_5_1_MODEL_IDS.has(model.trim())
     ? CLAUDE_FABLE_5_1_MIN_CLI_VERSION
     : null;
