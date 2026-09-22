@@ -8,8 +8,8 @@ import type { PluginOrganizationSwitcherProps } from "@paperclipai/plugin-sdk/ui
 import { PluginOrganizationSwitcher } from "./PluginOrganizationSwitcher";
 import { registerPluginReactComponent, registerPluginWebComponent, type ResolvedPluginSlot } from "@/plugins/slots";
 
-const state = vi.hoisted(() => ({ userId: "alice", companyId: "company-a", settled: true, slots: [] as ResolvedPluginSlot[], errorMessage: null as string | null, mobile: false, collapsed: false, close: vi.fn(), signOut: vi.fn(), props: null as PluginOrganizationSwitcherProps | null }));
-vi.mock("@/api/companies-query", () => ({ useAccountIdentity: () => state }));
+const state = vi.hoisted(() => ({ userId: "alice", companyId: "company-a", settled: true, companyListReady: true, companyIds: ["company-a", "company-b"], slots: [] as ResolvedPluginSlot[], errorMessage: null as string | null, mobile: false, collapsed: false, close: vi.fn(), signOut: vi.fn(), props: null as PluginOrganizationSwitcherProps | null }));
+vi.mock("@/api/companies-query", () => ({ useAccountIdentity: () => state, useCompanyListQuery: () => ({ isSuccess: state.companyListReady, data: { unauthorized: false, companies: state.companyIds.map(id => ({ id, name: "Acme", issuePrefix: "ACME", logoUrl: "/logo" })) } }) }));
 vi.mock("@/api/auth", () => ({ authApi: { getSession: async () => ({ user: { id: state.userId } }) } }));
 vi.mock("@/context/CompanyContext", () => ({ useCompany: () => ({ selectedCompanyId: state.companyId, selectedCompany: { name: "Acme", issuePrefix: "ACME", logoUrl: "/logo" } }) }));
 vi.mock("@/context/SidebarContext", () => ({ useSidebar: () => ({ isMobile: state.mobile, setSidebarOpen: state.close, collapsed: state.collapsed, peeking: false }) }));
@@ -26,7 +26,7 @@ function render() {
 }
 afterEach(() => {
   if (root) flushSync(() => root!.unmount()); root = undefined; container?.remove(); client.clear(); vi.restoreAllMocks();
-  Object.assign(state, { userId: "alice", companyId: "company-a", settled: true, slots: [], errorMessage: null, mobile: false, collapsed: false, props: null });
+  Object.assign(state, { userId: "alice", companyId: "company-a", settled: true, companyListReady: true, companyIds: ["company-a", "company-b"], slots: [], errorMessage: null, mobile: false, collapsed: false, props: null });
   state.close.mockClear(); state.signOut.mockClear();
 });
 function register() {
@@ -50,6 +50,23 @@ describe("organization navigation replacement", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     registerPluginReactComponent(slot.pluginKey, "Broken", () => { throw new Error("render failed"); });
     state.slots = [{ ...slot, exportName: "Broken" }]; render(); expect(container.textContent).toBe("Built-in organizations");
+  });
+  it("does not mount a new account with the previous account's company selection", () => {
+    register(); render();
+    state.userId = "bob";
+    state.companyListReady = false;
+    state.props = null;
+    render();
+    expect(container.textContent).toBe("Built-in organizations");
+    expect(state.props).toBeNull();
+    state.companyListReady = true;
+    state.companyIds = ["company-b"];
+    render();
+    expect(container.textContent).toBe("Built-in organizations");
+    expect(state.props).toBeNull();
+    state.companyId = "company-b";
+    render();
+    expect(container.textContent).toBe("Private organizations");
   });
   it("keeps required navigation when the replacement cannot accept React callbacks", () => {
     registerPluginWebComponent(slot.pluginKey, "WebSwitcher", "fixture-switcher");

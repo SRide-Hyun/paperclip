@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { PluginOrganizationSwitcherProps } from "@paperclipai/plugin-sdk/ui";
-import { useAccountIdentity } from "@/api/companies-query";
+import { useAccountIdentity, useCompanyListQuery } from "@/api/companies-query";
 import { useCompany } from "@/context/CompanyContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useSignOut } from "@/hooks/useSignOut";
@@ -14,10 +14,16 @@ export function PluginOrganizationSwitcher({ children, open: controlledOpen, onO
   onOpenChange?: (open: boolean) => void;
 }) {
   const { userId, settled } = useAccountIdentity();
-  const { selectedCompanyId, selectedCompany } = useCompany();
+  const { selectedCompanyId } = useCompany();
+  const companyList = useCompanyListQuery();
+  // Selection is component state and can outlive its account until an effect
+  // clears it. Resolve it against this account's query before mounting plugins.
+  const selectedCompany = companyList.data?.companies.find(company => company.id === selectedCompanyId) ?? null;
+  const contextSettled = settled && companyList.isSuccess && !companyList.data?.unauthorized
+    && (selectedCompanyId === null || selectedCompany !== null);
   return (
     <OrganizationSwitcher key={JSON.stringify([userId, selectedCompanyId])}
-      settled={settled} companyId={selectedCompanyId}
+      settled={contextSettled} companyId={selectedCompanyId}
       company={selectedCompany} open={controlledOpen} onOpenChange={onOpenChange}>
       {children}
     </OrganizationSwitcher>

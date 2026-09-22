@@ -625,6 +625,9 @@ Declare one `organizationSwitcher` slot with `ui.sidebar.register`. The host
 passes `PluginOrganizationSwitcherProps`: current company display data, collapsed
 and open state, navigation/logout callbacks, and an icon renderer. Use the host
 logout callback; authenticate remote account requests at their owning service.
+`currentCompany` describes the host-local company. A distribution plugin must
+resolve its external account/organization label itself; the host does not fetch
+that portfolio on the plugin's behalf.
 The slot props and `useHostContext()` are display context, not proof of identity.
 The host resets plugin state on account/company changes and keeps its built-in
 menu when no unique contribution exists, discovery fails, the module is missing,

@@ -276,6 +276,8 @@ export interface PluginDetailTabProps {
  * These values/callbacks are presentation context, never authorization. */
 export interface PluginOrganizationSwitcherProps {
   organizationSwitcher: {
+    /** Host-local company branding, not an external account/organization label.
+     * Plugins resolve external organization identity at their owning service. */
     currentCompany: { name: string; logoUrl: string | null } | null;
     collapsed: boolean;
     open: boolean;
