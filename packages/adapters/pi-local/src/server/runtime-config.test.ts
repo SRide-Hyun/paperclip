@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { preparePiRuntimeConfig } from "./runtime-config.js";
+import { mergePiAdapterConfigEnv, preparePiRuntimeConfig } from "./runtime-config.js";
 
 const cleanupPaths = new Set<string>();
 
@@ -223,5 +223,37 @@ describe("preparePiRuntimeConfig", () => {
     expect(prepared.env.PI_CODING_AGENT_DIR).toBeUndefined();
     expect(prepared.notes).toEqual([]);
     await prepared.cleanup();
+  });
+});
+
+describe("mergePiAdapterConfigEnv", () => {
+  it("projects resolved agent secrets to Pi while preserving runtime env precedence", () => {
+    const marker = "-----BEGIN SYNTHETIC PRIVATE KEY-----\nnot-a-real-key\n-----END SYNTHETIC PRIVATE KEY-----";
+    const env = mergePiAdapterConfigEnv({
+      env: { PAPERCLIP_RUN_ID: "run-from-runtime", PAPERCLIP_API_KEY: "run-token" },
+      envConfig: {
+        PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY: marker,
+        PAPERCLIP_RUN_ID: "config-must-not-win",
+        PAPERCLIP_API_KEY: "config-token-must-not-win",
+        GITHUB_APP_ID: "4947505",
+      },
+    });
+
+    expect(env.PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY).toBe(marker);
+    expect(env.PAPERCLIP_RUN_ID).toBe("run-from-runtime");
+    expect(env.PAPERCLIP_API_KEY).toBe("run-token");
+    expect(env.GITHUB_APP_ID).toBe("4947505");
+  });
+
+  it("rewrites configured workspace cwd for remote Pi execution", () => {
+    const env = mergePiAdapterConfigEnv({
+      env: {},
+      envConfig: { APP_WORKSPACE_CWD: "/local/project" },
+      workspaceCwd: "/local/project",
+      executionCwd: "/runtime/workspace/project",
+      executionTargetIsRemote: true,
+    });
+
+    expect(env.APP_WORKSPACE_CWD).toBe("/runtime/workspace/project");
   });
 });

@@ -57,7 +57,7 @@ import {
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
-import { preparePiRuntimeConfig } from "./runtime-config.js";
+import { mergePiAdapterConfigEnv, preparePiRuntimeConfig } from "./runtime-config.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -389,11 +389,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   // Build environment
   const envConfig = parseObject(config.env);
-  const env: Record<string, string> = {
+  let env: Record<string, string> = {
     ...buildPaperclipEnv(agent),
     ...buildRuntimeToolsEnv(ctx.runtimeTools),
   };
   env.PAPERCLIP_RUN_ID = runId;
+  env = mergePiAdapterConfigEnv({
+    env,
+    envConfig,
+    workspaceCwd: effectiveWorkspaceCwd,
+    executionCwd: effectiveExecutionCwd,
+    executionTargetIsRemote,
+  });
 
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||

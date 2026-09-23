@@ -222,7 +222,7 @@ describe("pi remote execution", () => {
     const workspaceDir = path.join(rootDir, "workspace");
     await mkdir(workspaceDir, { recursive: true });
 
-    const envMarker = "SYNTHETIC_ENV_SECRET_MARKER_7f24";
+    const envMarker = "-----BEGIN SYNTHETIC PRIVATE KEY-----\nnot-a-real-key\n-----END SYNTHETIC PRIVATE KEY-----";
     const authMarker = "SYNTHETIC_AUTH_SECRET_MARKER_934c";
     const legacyMarker = "SYNTHETIC_LEGACY_CONFIG_MARKER_55a1";
     const shortSecret = "a";
@@ -261,7 +261,7 @@ describe("pi remote execution", () => {
         promptTemplate:
           "{{context.taskDescription}} {{agent.adapterConfig.env.LEGACY_KEY}} {{agent.adapterConfig.env.SHORT_LEGACY_KEY}} {{agent.adapterConfig.env.COMMON_LEGACY_KEY}}",
         env: {
-          SYNTHETIC_ENV_SECRET: envMarker,
+          PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY: envMarker,
           SYNTHETIC_SHORT_SECRET: shortSecret,
           SYNTHETIC_COMMON_SECRET: commonSecret,
         },
@@ -271,7 +271,7 @@ describe("pi remote execution", () => {
         taskDescription: `write a safe sentence about a small marker in dev: ${envMarker} ${authMarker}`,
         paperclipSecrets: {
           manifest: [
-            { envKey: "SYNTHETIC_ENV_SECRET" },
+            { envKey: "PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY" },
             { envKey: "SYNTHETIC_SHORT_SECRET" },
             { envKey: "SYNTHETIC_COMMON_SECRET" },
           ],
@@ -292,6 +292,7 @@ describe("pi remote execution", () => {
     expect(processArgText).not.toContain(envMarker);
     expect(processArgText).not.toContain(authMarker);
     expect(processArgText).not.toContain(legacyMarker);
+    expect(processCall?.[3].env.PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY).toBe(envMarker);
     expect(processCall?.[3].stdin).not.toContain(envMarker);
     expect(processCall?.[3].stdin).not.toContain(authMarker);
     expect(processCall?.[3].stdin).not.toContain(legacyMarker);

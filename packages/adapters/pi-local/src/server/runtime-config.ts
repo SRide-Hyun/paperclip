@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  isForbiddenConfigEnvKey,
+  isPaperclipRuntimeEnvKey,
+  rewriteWorkspaceCwdEnvVarsForExecution,
+} from "@paperclipai/adapter-utils/server-utils";
 
 type PreparedPiRuntimeConfig = {
   env: Record<string, string>;
@@ -9,6 +14,30 @@ type PreparedPiRuntimeConfig = {
   agentConfigDir: string | null;
   cleanup: () => Promise<void>;
 };
+
+/** Project resolved agent env bindings into the Pi child environment. */
+export function mergePiAdapterConfigEnv(input: {
+  env: Record<string, string>;
+  envConfig: Record<string, unknown>;
+  workspaceCwd?: string | null;
+  executionCwd?: string | null;
+  executionTargetIsRemote?: boolean;
+}): Record<string, string> {
+  const shapedEnvConfig = rewriteWorkspaceCwdEnvVarsForExecution({
+    env: input.envConfig,
+    workspaceCwd: input.workspaceCwd,
+    executionCwd: input.executionCwd,
+    executionTargetIsRemote: input.executionTargetIsRemote,
+  });
+  const env = { ...input.env };
+  for (const [key, value] of Object.entries(shapedEnvConfig)) {
+    // The run token and other server-assigned PAPERCLIP_* values stay authoritative.
+    if (isForbiddenConfigEnvKey(key)) continue;
+    if (isPaperclipRuntimeEnvKey(key) && key in env) continue;
+    env[key] = value;
+  }
+  return env;
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
