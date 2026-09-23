@@ -226,6 +226,15 @@ describe("pi remote execution", () => {
     const shortSecret = "a";
     const commonSecret = "dev";
     const metadata: Array<Record<string, unknown>> = [];
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "provider  model\nopenai  gpt-5.4-mini\n",
+      stderr: "",
+      pid: 122,
+      startedAt: new Date().toISOString(),
+    });
     await execute({
       runId: "run-secret-argv",
       agent: {
@@ -256,18 +265,6 @@ describe("pi remote execution", () => {
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
         taskDescription: "write a safe sentence about a small marker in dev:",
       },
-      executionTransport: {
-        remoteExecution: {
-          host: "127.0.0.1",
-          port: 2222,
-          username: "fixture",
-          remoteWorkspacePath: "/remote/workspace",
-          remoteCwd: "/remote/workspace",
-          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
-          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
-          strictHostKeyChecking: true,
-        },
-      },
       onLog: async () => {},
       onMeta: async (meta) => { metadata.push(meta as unknown as Record<string, unknown>); },
     });
@@ -291,16 +288,39 @@ describe("pi remote execution", () => {
     const metadataText = JSON.stringify(metadata);
     expect(metadataText).not.toContain(legacyMarker);
 
-    const stagedPromptUpload = (runSshCommand.mock.calls as unknown as Array<[unknown, string, { stdin?: string }]>).find(
-      ([, command]) => command.includes("append-system-prompt-") && command.includes("chmod 600"),
-    );
-    expect(stagedPromptUpload?.[2].stdin).not.toContain(legacyMarker);
-    expect(runSshCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.stringContaining("rm -f"),
-      expect.anything(),
-    );
+  });
 
+  it("fails closed before SSH for legacy inline env values without a secret manifest", async () => {
+    const marker = "SYNTHETIC_LEGACY_INLINE_CREDENTIAL_8c21";
+    const logChunks: string[] = [];
+    const metadata: unknown[] = [];
+
+    await expect(execute({
+      runId: "run-ssh-legacy-env-blocked",
+      agent: { id: "agent-1", companyId: "company-1", name: "Pi Builder", adapterType: "pi_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", env: { LEGACY_CREDENTIAL: marker } },
+      context: {},
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async (_stream, chunk) => { logChunks.push(chunk); },
+      onMeta: async (value) => { metadata.push(value); },
+    })).rejects.toThrow("SSH execution cannot safely receive secret runtime environment values");
+
+    expect(runChildProcess).not.toHaveBeenCalled();
+    expect(runSshCommand).not.toHaveBeenCalled();
+    expect(logChunks.join("\n")).not.toContain(marker);
+    expect(JSON.stringify(metadata)).not.toContain(marker);
   });
 
   it("fails closed before SSH when a run has bound secret env values", async () => {
@@ -365,6 +385,40 @@ describe("pi remote execution", () => {
     expect(runSshCommand).not.toHaveBeenCalled();
   });
 
+  it("redacts manifest-bound env values from invocation metadata", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-meta-secret-"));
+    cleanupDirs.push(rootDir);
+    const marker = "SYNTHETIC_MULTILINE_SECRET_MARKER\nSECOND_LINE";
+    const metadata: Array<Record<string, unknown>> = [];
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "provider  model\nopenai  gpt-5.4-mini\n",
+      stderr: "",
+      pid: 122,
+      startedAt: new Date().toISOString(),
+    });
+
+    await execute({
+      runId: "run-meta-secret-redaction",
+      agent: { id: "agent-1", companyId: "company-1", name: "Pi Builder", adapterType: "pi_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", env: { CUSTOM_BLOB: marker } },
+      context: {
+        paperclipWorkspace: { cwd: rootDir, source: "project_primary" },
+        paperclipSecrets: { manifest: [{ envKey: "CUSTOM_BLOB" }] },
+      },
+      onLog: async () => {},
+      onMeta: async (value) => { metadata.push(value as unknown as Record<string, unknown>); },
+    });
+
+    expect(metadata).toHaveLength(1);
+    const invocationEnv = metadata[0].env as Record<string, string>;
+    expect(invocationEnv.CUSTOM_BLOB).toBe("[redacted runtime secret]");
+    expect(JSON.stringify(metadata)).not.toContain(marker);
+  });
+
   it("keeps the system prompt staged until Pi exits, then cleans it after timeout", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-prompt-timeout-"));
     cleanupDirs.push(rootDir);
@@ -411,11 +465,10 @@ describe("pi remote execution", () => {
     expect(runSshCommand).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("rm -f"), expect.anything());
   });
 
-  it("ships the managed Pi agent config and repoints PI_CODING_AGENT_DIR when PAPERCLIP_PI_PROVIDERS is set", async () => {
+  it("fails closed before SSH when provider config carries credentials", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-remote-providers-"));
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
-    const managedRemoteWorkspace = "/remote/workspace/.paperclip-runtime/runs/run-providers/workspace";
     await mkdir(workspaceDir, { recursive: true });
 
     const providers = {
@@ -427,7 +480,7 @@ describe("pi remote execution", () => {
       },
     };
 
-    await execute({
+    await expect(execute({
       runId: "run-providers",
       agent: {
         id: "agent-1",
@@ -447,7 +500,7 @@ describe("pi remote execution", () => {
         model: "tensorix/deepseek/deepseek-chat-v3.1",
         env: {
           PAPERCLIP_PI_PROVIDERS: JSON.stringify(providers),
-          ANTHROPIC_API_KEY: "sk-bf-REALVK",
+          ANTHROPIC_API_KEY: "SYNTHETIC_PROVIDER_KEY_MARKER",
         },
       },
       context: {
@@ -469,21 +522,10 @@ describe("pi remote execution", () => {
         },
       },
       onLog: async () => {},
-    });
+    })).rejects.toThrow("SSH execution cannot safely receive secret runtime environment values");
 
-    expect(syncDirectoryToSsh).toHaveBeenCalledWith(expect.objectContaining({
-      remoteDir: `${managedRemoteWorkspace}/.paperclip-runtime/pi/agentConfig`,
-    }));
-    const call = runChildProcess.mock.calls[0] as unknown as
-      | [string, string, string[], { env: Record<string, string> }]
-      | undefined;
-    expect(call?.[3].env.PI_CODING_AGENT_DIR).toBe(
-      `${managedRemoteWorkspace}/.paperclip-runtime/pi/agentConfig`,
-    );
-    expect(call?.[2]).toContain("--provider");
-    expect(call?.[2]).toContain("tensorix");
-    expect(call?.[2]).toContain("--model");
-    expect(call?.[2]).toContain("deepseek/deepseek-chat-v3.1");
+    expect(runChildProcess).not.toHaveBeenCalled();
+    expect(runSshCommand).not.toHaveBeenCalled();
   });
 
   it("resumes saved Pi sessions for remote SSH execution only when the identity matches", async () => {

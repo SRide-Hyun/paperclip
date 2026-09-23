@@ -204,6 +204,29 @@ function redactRunSecrets(
   return redacted;
 }
 
+function buildPiInvocationEnvForLogs(input: {
+  env: Record<string, string>;
+  runtimeEnv?: NodeJS.ProcessEnv | Record<string, string>;
+  resolvedCommand?: string | null;
+  secretEnvKeys: Set<string>;
+  authToken?: string;
+}): Record<string, string> {
+  const loggedEnv = buildInvocationEnvForLogs(input.env, {
+    runtimeEnv: input.runtimeEnv,
+    includeRuntimeKeys: ["HOME"],
+    resolvedCommand: input.resolvedCommand,
+  });
+  for (const key of input.secretEnvKeys) {
+    if (key in loggedEnv) loggedEnv[key] = "[redacted runtime secret]";
+  }
+  if (input.authToken) {
+    for (const [key, value] of Object.entries(loggedEnv)) {
+      if (value === input.authToken) loggedEnv[key] = "[redacted runtime secret]";
+    }
+  }
+  return loggedEnv;
+}
+
 async function createPiSystemPromptFile(input: {
   runId: string;
   target: ReturnType<typeof readAdapterExecutionTarget>;
@@ -343,10 +366,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
   const secretEnvKeys = resolveRunSecretEnvKeys(context);
+  const envConfig = parseObject(config.env);
+  const hasConfiguredEnvValues = Object.values(envConfig).some((value) => typeof value === "string");
   if (
     executionTarget?.kind === "remote" &&
     executionTarget.transport === "ssh" &&
-    (secretEnvKeys.size > 0 || Boolean(authToken))
+    (secretEnvKeys.size > 0 || hasConfiguredEnvValues || Boolean(authToken) || Boolean(ctx.runtimeTools?.bearerToken))
   ) {
     throw new Error(
       "Pi SSH execution cannot safely receive secret runtime environment values because the SSH transport serializes environment values into the remote command line. Use a local or sandbox target until secure SSH environment transport is available.",
@@ -398,7 +423,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
 
   // Build environment
-  const envConfig = parseObject(config.env);
   let env: Record<string, string> = {
     ...buildPaperclipEnv(agent),
     ...buildRuntimeToolsEnv(ctx.runtimeTools),
@@ -520,10 +544,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       timeoutSec,
     });
     const resolvedCommand = await resolveAdapterExecutionTargetCommandForLogs(command, executionTarget, cwd, runtimeEnv);
-    let loggedEnv = buildInvocationEnvForLogs(env, {
+    let loggedEnv = buildPiInvocationEnvForLogs({
+      env,
       runtimeEnv,
-      includeRuntimeKeys: ["HOME"],
       resolvedCommand,
+      secretEnvKeys,
+      authToken,
     });
 
     if (!executionTargetIsRemote) {
@@ -624,14 +650,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       });
       if (paperclipBridge) {
         Object.assign(env, paperclipBridge.env);
-        loggedEnv = buildInvocationEnvForLogs(env, {
+        loggedEnv = buildPiInvocationEnvForLogs({
+          env,
           runtimeEnv: Object.fromEntries(
             Object.entries(ensurePathInEnv({ ...process.env, ...env })).filter(
               (entry): entry is [string, string] => typeof entry[1] === "string",
             ),
           ),
-          includeRuntimeKeys: ["HOME"],
           resolvedCommand,
+          secretEnvKeys,
+          authToken,
         });
       }
     }
