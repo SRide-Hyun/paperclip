@@ -342,6 +342,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
+  const secretEnvKeys = resolveRunSecretEnvKeys(context);
+  if (
+    executionTarget?.kind === "remote" &&
+    executionTarget.transport === "ssh" &&
+    (secretEnvKeys.size > 0 || Boolean(authToken))
+  ) {
+    throw new Error(
+      "Pi SSH execution cannot safely receive secret runtime environment values because the SSH transport serializes environment values into the remote command line. Use a local or sandbox target until secure SSH environment transport is available.",
+    );
+  }
   let cleanupSystemPromptFile: (() => Promise<void>) | null = null;
 
   const promptTemplate = asString(
@@ -728,7 +738,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
 
     const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
-    const secretEnvKeys = resolveRunSecretEnvKeys(context);
     const templateData = {
       agentId: agent.id,
       companyId: agent.companyId,

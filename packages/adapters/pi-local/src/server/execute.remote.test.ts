@@ -216,29 +216,16 @@ describe("pi remote execution", () => {
     expect(restoreWorkspaceFromSshExecution).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps synthetic runtime secrets out of Pi argv and invocation metadata", async () => {
+  it("keeps prompt arguments and invocation metadata free of rendered content", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-secret-argv-"));
     cleanupDirs.push(rootDir);
     const workspaceDir = path.join(rootDir, "workspace");
     await mkdir(workspaceDir, { recursive: true });
 
-    const envMarker = "-----BEGIN SYNTHETIC PRIVATE KEY-----\nnot-a-real-key\n-----END SYNTHETIC PRIVATE KEY-----";
-    const authMarker = "SYNTHETIC_AUTH_SECRET_MARKER_934c";
     const legacyMarker = "SYNTHETIC_LEGACY_CONFIG_MARKER_55a1";
     const shortSecret = "a";
     const commonSecret = "dev";
     const metadata: Array<Record<string, unknown>> = [];
-    const remoteSpec = {
-      host: "127.0.0.1",
-      port: 2222,
-      username: "fixture",
-      remoteWorkspacePath: "/remote/workspace",
-      remoteCwd: "/remote/workspace",
-      privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
-      knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
-      strictHostKeyChecking: true,
-    };
-
     await execute({
       runId: "run-secret-argv",
       agent: {
@@ -261,24 +248,26 @@ describe("pi remote execution", () => {
         promptTemplate:
           "{{context.taskDescription}} {{agent.adapterConfig.env.LEGACY_KEY}} {{agent.adapterConfig.env.SHORT_LEGACY_KEY}} {{agent.adapterConfig.env.COMMON_LEGACY_KEY}}",
         env: {
-          PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY: envMarker,
           SYNTHETIC_SHORT_SECRET: shortSecret,
           SYNTHETIC_COMMON_SECRET: commonSecret,
         },
       },
       context: {
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
-        taskDescription: `write a safe sentence about a small marker in dev: ${envMarker} ${authMarker}`,
-        paperclipSecrets: {
-          manifest: [
-            { envKey: "PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY" },
-            { envKey: "SYNTHETIC_SHORT_SECRET" },
-            { envKey: "SYNTHETIC_COMMON_SECRET" },
-          ],
+        taskDescription: "write a safe sentence about a small marker in dev:",
+      },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+          strictHostKeyChecking: true,
         },
       },
-      executionTransport: { remoteExecution: remoteSpec },
-      authToken: authMarker,
       onLog: async () => {},
       onMeta: async (meta) => { metadata.push(meta as unknown as Record<string, unknown>); },
     });
@@ -289,14 +278,8 @@ describe("pi remote execution", () => {
     expect(processCall).toBeDefined();
     const processArgText = processCall?.[2].join(" ") ?? "";
     expect(processArgText).toContain("--append-system-prompt");
-    expect(processArgText).not.toContain(envMarker);
-    expect(processArgText).not.toContain(authMarker);
     expect(processArgText).not.toContain(legacyMarker);
-    expect(processCall?.[3].env.PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY).toBe(envMarker);
-    expect(processCall?.[3].stdin).not.toContain(envMarker);
-    expect(processCall?.[3].stdin).not.toContain(authMarker);
     expect(processCall?.[3].stdin).not.toContain(legacyMarker);
-    expect(processCall?.[3].stdin).toContain("[redacted runtime secret]");
     expect(processCall?.[3].stdin).toContain("write a safe sentence about a small marker in dev:");
     expect(processCall?.[3].stdin).toContain("a small marker");
     expect(processCall?.[3].stdin).toContain("in dev:");
@@ -306,21 +289,80 @@ describe("pi remote execution", () => {
     expect(metadata[0]).not.toHaveProperty("prompt");
     expect(metadata[0]).not.toHaveProperty("context");
     const metadataText = JSON.stringify(metadata);
-    expect(metadataText).not.toContain(envMarker);
-    expect(metadataText).not.toContain(authMarker);
     expect(metadataText).not.toContain(legacyMarker);
 
     const stagedPromptUpload = (runSshCommand.mock.calls as unknown as Array<[unknown, string, { stdin?: string }]>).find(
       ([, command]) => command.includes("append-system-prompt-") && command.includes("chmod 600"),
     );
-    expect(stagedPromptUpload?.[2].stdin).not.toContain(envMarker);
-    expect(stagedPromptUpload?.[2].stdin).not.toContain(authMarker);
     expect(stagedPromptUpload?.[2].stdin).not.toContain(legacyMarker);
     expect(runSshCommand).toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining("rm -f"),
       expect.anything(),
     );
+
+  });
+
+  it("fails closed before SSH when a run has bound secret env values", async () => {
+    const marker = "-----BEGIN SYNTHETIC PRIVATE KEY-----\nnot-a-real-key\n-----END SYNTHETIC PRIVATE KEY-----";
+    const logChunks: string[] = [];
+    const metadata: unknown[] = [];
+
+    await expect(execute({
+      runId: "run-ssh-secret-blocked",
+      agent: { id: "agent-1", companyId: "company-1", name: "Pi Builder", adapterType: "pi_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", env: { PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY: marker } },
+      context: {
+        paperclipSecrets: { manifest: [{ envKey: "PAPERCLIP_PR_VERIFIER_GITHUB_APP_PRIVATE_KEY" }] },
+      },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async (_stream, chunk) => { logChunks.push(chunk); },
+      onMeta: async (value) => { metadata.push(value); },
+    })).rejects.toThrow("SSH execution cannot safely receive secret runtime environment values");
+
+    expect(runChildProcess).not.toHaveBeenCalled();
+    expect(runSshCommand).not.toHaveBeenCalled();
+    expect(logChunks.join("\n")).not.toContain(marker);
+    expect(JSON.stringify(metadata)).not.toContain(marker);
+  });
+
+  it("fails closed before SSH when the run token is present", async () => {
+    await expect(execute({
+      runId: "run-ssh-token-blocked",
+      agent: { id: "agent-1", companyId: "company-1", name: "Pi Builder", adapterType: "pi_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini" },
+      context: {},
+      authToken: "SYNTHETIC_RUN_TOKEN_MARKER",
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    })).rejects.toThrow("SSH execution cannot safely receive secret runtime environment values");
+
+    expect(runChildProcess).not.toHaveBeenCalled();
+    expect(runSshCommand).not.toHaveBeenCalled();
   });
 
   it("keeps the system prompt staged until Pi exits, then cleans it after timeout", async () => {
