@@ -186,12 +186,16 @@ function redactRunSecrets(
   secretEnvKeys: Set<string>,
   authToken?: string,
 ): string {
+  // Short/common values cause broad false positives in natural language. Secret
+  // values are not exposed through templateData; only redact high-confidence
+  // token-like values that may also appear in task or instruction text.
+  const minimumRedactionLength = 16;
   const secretValues = new Set<string>();
   for (const key of secretEnvKeys) {
     const value = env[key];
-    if (typeof value === "string" && value.length > 0) secretValues.add(value);
+    if (typeof value === "string" && value.length >= minimumRedactionLength) secretValues.add(value);
   }
-  if (authToken) secretValues.add(authToken);
+  if (authToken && authToken.length >= minimumRedactionLength) secretValues.add(authToken);
 
   let redacted = text;
   for (const value of [...secretValues].sort((left, right) => right.length - left.length)) {

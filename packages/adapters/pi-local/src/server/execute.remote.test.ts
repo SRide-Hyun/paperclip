@@ -225,6 +225,8 @@ describe("pi remote execution", () => {
     const envMarker = "SYNTHETIC_ENV_SECRET_MARKER_7f24";
     const authMarker = "SYNTHETIC_AUTH_SECRET_MARKER_934c";
     const legacyMarker = "SYNTHETIC_LEGACY_CONFIG_MARKER_55a1";
+    const shortSecret = "a";
+    const commonSecret = "dev";
     const metadata: Array<Record<string, unknown>> = [];
     const remoteSpec = {
       host: "127.0.0.1",
@@ -244,19 +246,36 @@ describe("pi remote execution", () => {
         companyId: "company-1",
         name: "Pi Builder",
         adapterType: "pi_local",
-        adapterConfig: { env: { LEGACY_KEY: legacyMarker } },
+        adapterConfig: {
+          env: {
+            LEGACY_KEY: legacyMarker,
+            SHORT_LEGACY_KEY: shortSecret,
+            COMMON_LEGACY_KEY: commonSecret,
+          },
+        },
       },
       runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
       config: {
         command: "pi",
         model: "openai/gpt-5.4-mini",
-        promptTemplate: "{{context.taskDescription}} {{agent.adapterConfig.env.LEGACY_KEY}}",
-        env: { SYNTHETIC_ENV_SECRET: envMarker },
+        promptTemplate:
+          "{{context.taskDescription}} {{agent.adapterConfig.env.LEGACY_KEY}} {{agent.adapterConfig.env.SHORT_LEGACY_KEY}} {{agent.adapterConfig.env.COMMON_LEGACY_KEY}}",
+        env: {
+          SYNTHETIC_ENV_SECRET: envMarker,
+          SYNTHETIC_SHORT_SECRET: shortSecret,
+          SYNTHETIC_COMMON_SECRET: commonSecret,
+        },
       },
       context: {
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
-        taskDescription: `safe text ${envMarker} ${authMarker}`,
-        paperclipSecrets: { manifest: [{ envKey: "SYNTHETIC_ENV_SECRET" }] },
+        taskDescription: `write a safe sentence about a small marker in dev: ${envMarker} ${authMarker}`,
+        paperclipSecrets: {
+          manifest: [
+            { envKey: "SYNTHETIC_ENV_SECRET" },
+            { envKey: "SYNTHETIC_SHORT_SECRET" },
+            { envKey: "SYNTHETIC_COMMON_SECRET" },
+          ],
+        },
       },
       executionTransport: { remoteExecution: remoteSpec },
       authToken: authMarker,
@@ -277,6 +296,9 @@ describe("pi remote execution", () => {
     expect(processCall?.[3].stdin).not.toContain(authMarker);
     expect(processCall?.[3].stdin).not.toContain(legacyMarker);
     expect(processCall?.[3].stdin).toContain("[redacted runtime secret]");
+    expect(processCall?.[3].stdin).toContain("write a safe sentence about a small marker in dev:");
+    expect(processCall?.[3].stdin).toContain("a small marker");
+    expect(processCall?.[3].stdin).toContain("in dev:");
 
     expect(metadata).toHaveLength(1);
     expect(metadata[0]).not.toHaveProperty("commandArgs");
