@@ -304,6 +304,7 @@ export interface AdapterExecutionTargetProcessOptions {
 export interface AdapterExecutionTargetShellOptions {
   cwd: string;
   env: Record<string, string>;
+  stdin?: string;
   timeoutSec?: number;
   graceSec?: number;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
@@ -944,6 +945,7 @@ export async function runAdapterExecutionTargetShellCommand(
         // identity var (NVM_DIR / PATH / etc.) that a profile re-exports.
         const result = await runSshCommand(target.spec, command, {
           env,
+          stdin: options.stdin,
           timeoutMs: (options.timeoutSec ?? 15) * 1000,
         });
         if (result.stdout) await onLog("stdout", result.stdout);
@@ -1001,6 +1003,7 @@ export async function runAdapterExecutionTargetShellCommand(
       args: shellCommandArgs(command),
       cwd: target.remoteCwd,
       env,
+      stdin: options.stdin,
       timeoutMs: (options.timeoutSec ?? 15) * 1000,
       onLog,
     });
@@ -1014,6 +1017,7 @@ export async function runAdapterExecutionTargetShellCommand(
     {
       cwd: options.cwd,
       env: options.env,
+      stdin: options.stdin,
       timeoutSec: options.timeoutSec ?? 15,
       graceSec: options.graceSec ?? 5,
       onLog,

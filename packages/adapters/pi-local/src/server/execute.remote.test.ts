@@ -216,6 +216,136 @@ describe("pi remote execution", () => {
     expect(restoreWorkspaceFromSshExecution).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps synthetic runtime secrets out of Pi argv and invocation metadata", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-secret-argv-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    const envMarker = "SYNTHETIC_ENV_SECRET_MARKER_7f24";
+    const authMarker = "SYNTHETIC_AUTH_SECRET_MARKER_934c";
+    const legacyMarker = "SYNTHETIC_LEGACY_CONFIG_MARKER_55a1";
+    const metadata: Array<Record<string, unknown>> = [];
+    const remoteSpec = {
+      host: "127.0.0.1",
+      port: 2222,
+      username: "fixture",
+      remoteWorkspacePath: "/remote/workspace",
+      remoteCwd: "/remote/workspace",
+      privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+      knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+      strictHostKeyChecking: true,
+    };
+
+    await execute({
+      runId: "run-secret-argv",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: { env: { LEGACY_KEY: legacyMarker } },
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: "pi",
+        model: "openai/gpt-5.4-mini",
+        promptTemplate: "{{context.taskDescription}} {{agent.adapterConfig.env.LEGACY_KEY}}",
+        env: { SYNTHETIC_ENV_SECRET: envMarker },
+      },
+      context: {
+        paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
+        taskDescription: `safe text ${envMarker} ${authMarker}`,
+        paperclipSecrets: { manifest: [{ envKey: "SYNTHETIC_ENV_SECRET" }] },
+      },
+      executionTransport: { remoteExecution: remoteSpec },
+      authToken: authMarker,
+      onLog: async () => {},
+      onMeta: async (meta) => { metadata.push(meta as unknown as Record<string, unknown>); },
+    });
+
+    const processCall = runChildProcess.mock.calls.find((call) =>
+      (call as unknown as [string, string, string[]])[2].join(" ").includes("--append-system-prompt"),
+    ) as unknown as [string, string, string[], { stdin?: string }] | undefined;
+    expect(processCall).toBeDefined();
+    const processArgText = processCall?.[2].join(" ") ?? "";
+    expect(processArgText).toContain("--append-system-prompt");
+    expect(processArgText).not.toContain(envMarker);
+    expect(processArgText).not.toContain(authMarker);
+    expect(processArgText).not.toContain(legacyMarker);
+    expect(processCall?.[3].stdin).not.toContain(envMarker);
+    expect(processCall?.[3].stdin).not.toContain(authMarker);
+    expect(processCall?.[3].stdin).not.toContain(legacyMarker);
+    expect(processCall?.[3].stdin).toContain("[redacted runtime secret]");
+
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]).not.toHaveProperty("commandArgs");
+    expect(metadata[0]).not.toHaveProperty("prompt");
+    expect(metadata[0]).not.toHaveProperty("context");
+    const metadataText = JSON.stringify(metadata);
+    expect(metadataText).not.toContain(envMarker);
+    expect(metadataText).not.toContain(authMarker);
+    expect(metadataText).not.toContain(legacyMarker);
+
+    const stagedPromptUpload = (runSshCommand.mock.calls as unknown as Array<[unknown, string, { stdin?: string }]>).find(
+      ([, command]) => command.includes("append-system-prompt-") && command.includes("chmod 600"),
+    );
+    expect(stagedPromptUpload?.[2].stdin).not.toContain(envMarker);
+    expect(stagedPromptUpload?.[2].stdin).not.toContain(authMarker);
+    expect(stagedPromptUpload?.[2].stdin).not.toContain(legacyMarker);
+    expect(runSshCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("rm -f"),
+      expect.anything(),
+    );
+  });
+
+  it("keeps the system prompt staged until Pi exits, then cleans it after timeout", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-prompt-timeout-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+    runChildProcess.mockResolvedValueOnce({
+      exitCode: -1,
+      signal: null,
+      timedOut: true,
+      stdout: "",
+      stderr: "",
+      pid: 124,
+      startedAt: new Date().toISOString(),
+    });
+
+    await execute({
+      runId: "run-prompt-timeout",
+      agent: { id: "agent-1", companyId: "company-1", name: "Pi Builder", adapterType: "pi_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", promptTemplate: "Synthetic private system instruction" },
+      context: { paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" } },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "SYNTHETIC_SSH_PRIVATE_KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 SYNTHETIC_HOST_KEY",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    const upload = (runSshCommand.mock.calls as unknown as Array<[unknown, string, { stdin?: string }]>).find(
+      ([, command]) => command.includes("append-system-prompt-") && command.includes("chmod 600"),
+    );
+    const piCall = runChildProcess.mock.calls[0] as unknown as [string, string, string[], { stdin?: string }];
+    expect(upload?.[2].stdin).toContain("Synthetic private system instruction");
+    expect(piCall[2].join(" ")).toContain("--append-system-prompt");
+    expect(piCall[2].join(" ")).not.toContain("Synthetic private system instruction");
+    expect(runSshCommand).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("rm -f"), expect.anything());
+  });
+
   it("ships the managed Pi agent config and repoints PI_CODING_AGENT_DIR when PAPERCLIP_PI_PROVIDERS is set", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-remote-providers-"));
     cleanupDirs.push(rootDir);

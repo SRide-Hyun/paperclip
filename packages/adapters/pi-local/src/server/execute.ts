@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -167,6 +168,115 @@ function executionCwdsMatch(saved: string, current: string, remote: boolean): bo
   return normalizeExecutionCwd(saved, remote) === normalizeExecutionCwd(current, remote);
 }
 
+function resolveRunSecretEnvKeys(context: Record<string, unknown>): Set<string> {
+  const paperclipSecrets = parseObject(context.paperclipSecrets);
+  const manifest = Array.isArray(paperclipSecrets.manifest) ? paperclipSecrets.manifest : [];
+  return new Set(
+    manifest.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+      const envKey = (entry as Record<string, unknown>).envKey;
+      return typeof envKey === "string" && envKey.length > 0 ? [envKey] : [];
+    }),
+  );
+}
+
+function redactRunSecrets(
+  text: string,
+  env: Record<string, string>,
+  secretEnvKeys: Set<string>,
+  authToken?: string,
+): string {
+  const secretValues = new Set<string>();
+  for (const key of secretEnvKeys) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 0) secretValues.add(value);
+  }
+  if (authToken) secretValues.add(authToken);
+
+  let redacted = text;
+  for (const value of [...secretValues].sort((left, right) => right.length - left.length)) {
+    redacted = redacted.split(value).join("[redacted runtime secret]");
+  }
+  return redacted;
+}
+
+async function createPiSystemPromptFile(input: {
+  runId: string;
+  target: ReturnType<typeof readAdapterExecutionTarget>;
+  cwd: string;
+  env: Record<string, string>;
+  body: string;
+  runtimeRootDir: string | null;
+}): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  if (!adapterExecutionTargetIsRemote(input.target)) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-pi-prompt-"));
+    const filePath = path.join(directory, "append-system-prompt.md");
+    try {
+      await fs.writeFile(filePath, input.body, { mode: 0o600, flag: "wx" });
+    } catch (error) {
+      await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+    return {
+      path: filePath,
+      cleanup: async () => fs.rm(directory, { recursive: true, force: true }),
+    };
+  }
+
+  const filePath = path.posix.join(
+    input.runtimeRootDir ?? input.cwd,
+    ".paperclip-runtime",
+    "pi",
+    `append-system-prompt-${randomUUID()}.md`,
+  );
+  let result: Awaited<ReturnType<typeof runAdapterExecutionTargetShellCommand>>;
+  try {
+    result = await runAdapterExecutionTargetShellCommand(
+      input.runId,
+      input.target,
+      `umask 077 && mkdir -p ${shellQuote(path.posix.dirname(filePath))} && cat > ${shellQuote(filePath)} && chmod 600 ${shellQuote(filePath)}`,
+      {
+        cwd: input.cwd,
+        env: input.env,
+        timeoutSec: 15,
+        graceSec: 5,
+        stdin: input.body,
+      },
+    );
+  } catch {
+    await runAdapterExecutionTargetShellCommand(
+      input.runId,
+      input.target,
+      `rm -f ${shellQuote(filePath)}`,
+      { cwd: input.cwd, env: input.env, timeoutSec: 15, graceSec: 5 },
+    ).catch(() => undefined);
+    throw new Error("Could not stage Pi system prompt securely");
+  }
+  if (result.timedOut || (result.exitCode ?? 0) !== 0) {
+    await runAdapterExecutionTargetShellCommand(
+      input.runId,
+      input.target,
+      `rm -f ${shellQuote(filePath)}`,
+      { cwd: input.cwd, env: input.env, timeoutSec: 15, graceSec: 5 },
+    ).catch(() => undefined);
+    throw new Error("Could not stage Pi system prompt securely");
+  }
+  return {
+    path: filePath,
+    cleanup: async () => {
+      const result = await runAdapterExecutionTargetShellCommand(
+        input.runId,
+        input.target,
+        `rm -f ${shellQuote(filePath)}`,
+        { cwd: input.cwd, env: input.env, timeoutSec: 15, graceSec: 5 },
+      );
+      if (result.timedOut || (result.exitCode ?? 0) !== 0) {
+        throw new Error("Could not remove run-owned Pi system prompt file");
+      }
+    },
+  };
+}
+
 function readSessionHeaderCwd(raw: string): string | null {
   const headerLine = raw
     .split(/\r?\n/)
@@ -228,6 +338,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
+  let cleanupSystemPromptFile: (() => Promise<void>) | null = null;
 
   const promptTemplate = asString(
     config.promptTemplate,
@@ -606,20 +717,37 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
 
     const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
+    const secretEnvKeys = resolveRunSecretEnvKeys(context);
     const templateData = {
       agentId: agent.id,
       companyId: agent.companyId,
       runId,
       company: { id: agent.companyId },
-      agent,
+      // Prompt templates receive only public agent identity fields. The full
+      // agent adapterConfig can contain legacy inline environment values.
+      agent: {
+        id: agent.id,
+        companyId: agent.companyId,
+        name: agent.name,
+        adapterType: agent.adapterType,
+      },
       run: { id: runId, source: "on_demand" },
       context,
     };
-    const renderedSystemPromptExtension = renderTemplate(systemPromptExtension, templateData);
-    const renderedBootstrapPrompt =
+    const renderedSystemPromptExtension = redactRunSecrets(
+      renderTemplate(systemPromptExtension, templateData),
+      env,
+      secretEnvKeys,
+      authToken,
+    );
+    const renderedBootstrapPrompt = redactRunSecrets(
       !canResumeSession && bootstrapPromptTemplate.trim().length > 0
         ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
-        : "";
+        : "",
+      env,
+      secretEnvKeys,
+      authToken,
+    );
     const taskContextNote = context.conversationMode === true
       ? selectPaperclipTaskMarkdown(context, { resumedSession: canResumeSession, includeCommunicationGuidance: false })
       : "";
@@ -666,7 +794,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return notes;
     })();
 
-    const buildArgs = (sessionFile: string, userPrompt: string): string[] => {
+    const systemPromptFile = await createPiSystemPromptFile({
+      runId,
+      target: runtimeExecutionTarget ?? null,
+      cwd: effectiveExecutionCwd,
+      env,
+      body: renderedSystemPromptExtension,
+      runtimeRootDir: remoteRuntimeRootDir,
+    });
+    cleanupSystemPromptFile = systemPromptFile.cleanup;
+
+    const buildArgs = (sessionFile: string): string[] => {
       const args: string[] = [];
 
       // Use JSON mode for structured output with print mode (non-interactive)
@@ -674,7 +812,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("-p"); // Non-interactive mode: process prompt and exit
 
       // Use --append-system-prompt to extend Pi's default system prompt
-      args.push("--append-system-prompt", renderedSystemPromptExtension);
+      // Pi reads an existing file path for this option. Keeping the prompt in
+      // a 0600 run-owned file prevents process-list tools from seeing it.
+      args.push("--append-system-prompt", systemPromptFile.path);
 
       if (provider) args.push("--provider", provider);
       if (modelId) args.push("--model", modelId);
@@ -686,9 +826,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
       if (extraArgs.length > 0) args.push(...extraArgs);
 
-      // Add the user prompt as the last argument
-      args.push(userPrompt);
-
       return args;
     };
 
@@ -697,18 +834,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         selectInitialCommunicationGuidance(context, { resumedSession: canResumeSession && sessionFile === sessionPath }),
         baseUserPrompt,
       ]);
-      const args = buildArgs(sessionFile, userPrompt);
+      const safeUserPrompt = redactRunSecrets(userPrompt, env, secretEnvKeys, authToken);
+      const args = buildArgs(sessionFile);
       if (onMeta) {
         await onMeta({
           adapterType: "pi_local",
           command: resolvedCommand,
           cwd: effectiveExecutionCwd,
           commandNotes,
-          commandArgs: args,
           env: loggedEnv,
-          prompt: userPrompt,
-          promptMetrics: { ...promptMetrics, promptChars: userPrompt.length },
-          context,
+          promptMetrics: { ...promptMetrics, promptChars: safeUserPrompt.length },
         });
       }
 
@@ -738,6 +873,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
         cwd,
         env: executionTargetIsRemote ? env : runtimeEnv,
+        stdin: safeUserPrompt,
         timeoutSec,
         graceSec,
         onSpawn,
@@ -877,6 +1013,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ]);
     }
   } finally {
-    await preparedRuntimeConfig.cleanup();
+    await Promise.all([
+      cleanupSystemPromptFile?.() ?? Promise.resolve(),
+      preparedRuntimeConfig.cleanup(),
+    ]);
   }
 }
