@@ -104,6 +104,21 @@ export const updateMemberPermissionsSchema = z.object({
 
 export type UpdateMemberPermissions = z.infer<typeof updateMemberPermissionsSchema>;
 
+/**
+ * Board-managed, suggestion-tier config-read scope for an agent manager.
+ * The server additionally verifies that every target is currently a direct
+ * report and records that relationship in the grant scope.
+ */
+export const setAgentDirectReportConfigReadGrantSchema = z.object({
+  directReportAgentIds: z.array(z.string().uuid()).max(25).default([]),
+}).superRefine((value, ctx) => {
+  if (new Set(value.directReportAgentIds).size !== value.directReportAgentIds.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Direct-report agent ids must be unique" });
+  }
+});
+
+export type SetAgentDirectReportConfigReadGrant = z.infer<typeof setAgentDirectReportConfigReadGrantSchema>;
+
 const editableMembershipStatuses = ["pending", "active", "suspended"] as const;
 
 export const updateCompanyMemberSchema = z.object({

@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
+  agents,
   companies,
   companyMemberships,
   createDb,
@@ -164,4 +165,76 @@ describeEmbeddedPostgres("access routes permissions upgrade compatibility", () =
       grantedByUserId: owner.principalId,
     });
   });
+
+  it("sets and removes only an exact direct-report config-read grant for an agent manager", async () => {
+    const { company, owner } = await createCompanyWithOwner(db);
+    const manager = await db.insert(agents).values({
+      companyId: company.id,
+      name: `Manager ${randomUUID()}`,
+      role: "general",
+      adapterType: "process",
+      adapterConfig: {},
+      runtimeConfig: {},
+    }).returning().then((rows) => rows[0]!);
+    const directReport = await db.insert(agents).values({
+      companyId: company.id,
+      name: `Direct report ${randomUUID()}`,
+      role: "devops",
+      reportsTo: manager.id,
+      adapterType: "process",
+      adapterConfig: {},
+      runtimeConfig: {},
+    }).returning().then((rows) => rows[0]!);
+    const unrelatedAgent = await db.insert(agents).values({
+      companyId: company.id,
+      name: `Unrelated ${randomUUID()}`,
+      role: "engineer",
+      adapterType: "process",
+      adapterConfig: {},
+      runtimeConfig: {},
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(companyMemberships).values({
+      companyId: company.id,
+      principalType: "agent",
+      principalId: manager.id,
+      status: "active",
+      membershipRole: "member",
+    });
+
+    const app = await createApp(db, company.id, owner.principalId);
+    const path = `/api/companies/${company.id}/agents/${manager.id}/direct-report-config-read-grant`;
+    const applied = await request(app).put(path).send({ directReportAgentIds: [directReport.id] });
+
+    expect(applied.status, JSON.stringify(applied.body)).toBe(200);
+    expect(applied.body).toMatchObject({
+      permissionKey: "agents:suggest-changes",
+      mode: "direct_reports",
+      directReportAgentIds: [directReport.id],
+    });
+    const grant = await db.select().from(principalPermissionGrants).where(and(
+      eq(principalPermissionGrants.companyId, company.id),
+      eq(principalPermissionGrants.principalType, "agent"),
+      eq(principalPermissionGrants.principalId, manager.id),
+    )).then((rows) => rows[0]!);
+    expect(grant).toMatchObject({
+      permissionKey: "agents:suggest-changes",
+      scope: { directReportAgentIds: [directReport.id] },
+      grantedByUserId: owner.principalId,
+    });
+
+    const unrelated = await request(app).put(path).send({ directReportAgentIds: [unrelatedAgent.id] });
+    expect(unrelated.status, JSON.stringify(unrelated.body)).toBe(400);
+    const readBack = await request(app).get(path);
+    expect(readBack.status).toBe(200);
+    expect(readBack.body.directReportAgentIds).toEqual([directReport.id]);
+
+    const removed = await request(app).put(path).send({ directReportAgentIds: [] });
+    expect(removed.status, JSON.stringify(removed.body)).toBe(200);
+    const afterRemove = await db.select().from(principalPermissionGrants).where(and(
+      eq(principalPermissionGrants.companyId, company.id),
+      eq(principalPermissionGrants.principalType, "agent"),
+      eq(principalPermissionGrants.principalId, manager.id),
+    ));
+    expect(afterRemove).toHaveLength(0);
+  }, 10_000);
 });

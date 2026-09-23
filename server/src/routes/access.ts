@@ -18,6 +18,7 @@ import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, sql } from "dri
 import type { Db } from "@paperclipai/db";
 import {
   assets,
+  agents as agentsTable,
   agentApiKeys,
   authUsers,
   companies,
@@ -43,6 +44,7 @@ import {
   updateCompanyMemberSchema,
   archiveCompanyMemberSchema,
   updateMemberPermissionsSchema,
+  setAgentDirectReportConfigReadGrantSchema,
   updateUserCompanyAccessSchema,
   PERMISSION_KEYS,
   isUuidLike,
@@ -4707,6 +4709,125 @@ export function accessRoutes(
       if (!member) throw notFound("Member not found");
       res.json(member);
     }
+  );
+
+  // Board-controlled suggestion-tier configuration visibility for one agent
+  // manager and an explicit allowlist of its current direct reports. This is
+  // intentionally not a general agent grant editor and never grants direct
+  // configuration mutation authority.
+  router.get(
+    "/companies/:companyId/agents/:agentId/direct-report-config-read-grant",
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const agentId = req.params.agentId as string;
+      await assertCompanyPermission(req, companyId, "users:manage_permissions");
+      const agent = await agents.getById(agentId);
+      if (!agent || agent.companyId !== companyId) throw notFound("Agent not found");
+      const membership = await access.getMembership(companyId, "agent", agentId);
+      if (!membership || membership.status !== "active") throw notFound("Agent membership not found");
+      const grant = (await access.listPrincipalGrants(companyId, "agent", agentId))
+        .find((row) => row.permissionKey === "agents:suggest-changes");
+      const scope = grant?.scope && typeof grant.scope === "object" ? grant.scope : null;
+      const scopedTargets = scope && Array.isArray(scope.directReportAgentIds)
+        ? scope.directReportAgentIds.filter((value): value is string => typeof value === "string")
+        : null;
+      res.json({
+        agentId,
+        permissionKey: "agents:suggest-changes",
+        mode: scopedTargets ? "direct_reports" : grant ? "other_scope" : "disabled",
+        directReportAgentIds: scopedTargets ?? [],
+      });
+    },
+  );
+
+  router.put(
+    "/companies/:companyId/agents/:agentId/direct-report-config-read-grant",
+    validate(setAgentDirectReportConfigReadGrantSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      const agentId = req.params.agentId as string;
+      await assertCompanyPermission(req, companyId, "users:manage_permissions");
+      const manager = await agents.getById(agentId);
+      if (!manager || manager.companyId !== companyId) throw notFound("Agent not found");
+      const membership = await access.getMembership(companyId, "agent", agentId);
+      if (!membership || membership.status !== "active") throw notFound("Agent membership not found");
+
+      const directReportAgentIds = req.body.directReportAgentIds as string[];
+      if (directReportAgentIds.length > 0) {
+        const directReports = await db
+          .select({ id: agentsTable.id })
+          .from(agentsTable)
+          .where(and(
+            eq(agentsTable.companyId, companyId),
+            eq(agentsTable.reportsTo, agentId),
+            ne(agentsTable.status, "terminated"),
+            inArray(agentsTable.id, directReportAgentIds),
+          ));
+        if (directReports.length !== directReportAgentIds.length) {
+          throw badRequest("Every target must be a current, non-terminated direct report in this company");
+        }
+      }
+
+      const existing = (await access.listPrincipalGrants(companyId, "agent", agentId))
+        .find((row) => row.permissionKey === "agents:suggest-changes");
+      const existingTargets = existing?.scope && typeof existing.scope === "object" &&
+        Array.isArray(existing.scope.directReportAgentIds)
+        ? existing.scope.directReportAgentIds.filter((value): value is string => typeof value === "string")
+        : null;
+      if (existing && !existingTargets) {
+        throw conflict("An existing agents:suggest-changes grant has a different scope; review it through the normal access workflow");
+      }
+
+      const sameTargets = existingTargets &&
+        [...existingTargets].sort().join("\0") === [...directReportAgentIds].sort().join("\0");
+      if (directReportAgentIds.length === 0) {
+        if (existing) {
+          await access.setPrincipalPermission(
+            companyId,
+            "agent",
+            agentId,
+            "agents:suggest-changes",
+            false,
+            req.actor.userId ?? null,
+          );
+        }
+      } else if (!sameTargets) {
+        if (existing) {
+          throw conflict("The scoped grant already exists with a different target set; remove it before replacing its scope");
+        }
+        await access.setPrincipalPermission(
+          companyId,
+          "agent",
+          agentId,
+          "agents:suggest-changes",
+          true,
+          req.actor.userId ?? null,
+          { directReportAgentIds: [...directReportAgentIds].sort() },
+        );
+      }
+
+      if (!sameTargets && (existing || directReportAgentIds.length > 0)) {
+        await logActivity(db, {
+          companyId,
+          actorType: "user",
+          actorId: req.actor.userId ?? "board",
+          action: "agent.direct_report_config_read_grant.updated",
+          entityType: "agent",
+          entityId: agentId,
+          details: {
+            permissionKey: "agents:suggest-changes",
+            targetCount: directReportAgentIds.length,
+          },
+        });
+      }
+
+      res.json({
+        agentId,
+        permissionKey: "agents:suggest-changes",
+        mode: directReportAgentIds.length > 0 ? "direct_reports" : "disabled",
+        directReportAgentIds: [...directReportAgentIds].sort(),
+      });
+    },
   );
 
   router.post(

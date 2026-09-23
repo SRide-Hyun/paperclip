@@ -370,7 +370,7 @@ async function scopeAllows(
   companyId: string,
   grantScope: Record<string, unknown> | null,
   requestedScope: Record<string, unknown> | null | undefined,
-  options: { requireStructuredScope?: boolean } = {},
+  options: { requireStructuredScope?: boolean; directReportOfAgentId?: string } = {},
 ) {
   if (!grantScope || Object.keys(grantScope).length === 0) return !options.requireStructuredScope;
   if (!requestedScope) return false;
@@ -409,6 +409,18 @@ async function scopeAllows(
   if (targetAgentIds.length > 0) {
     constrained = true;
     if (!scopeIncludesId(targetAgentIds, targetAssigneeAgentId)) return false;
+  }
+
+  const directReportAgentIds = scopeValuesForKeys(grantScope, ["directReportAgentIds"]);
+  if (directReportAgentIds.length > 0) {
+    constrained = true;
+    if (
+      !options.directReportOfAgentId ||
+      !scopeIncludesId(directReportAgentIds, targetAssigneeAgentId) ||
+      !targetAssigneeAgentId
+    ) return false;
+    const agentsById = await loadCompanyAgentHierarchy(db, companyId);
+    if (agentsById.get(targetAssigneeAgentId)?.reportsTo !== options.directReportOfAgentId) return false;
   }
 
   const targetUserIds = scopeValuesForKeys(grantScope, ["userId", "userIds"]);
@@ -674,6 +686,7 @@ export function authorizationService(db: Db) {
     if (
       !(await scopeAllows(db, input.companyId, grant.scope, input.scope, {
         requireStructuredScope: input.permissionKey === "tasks:assign_scope",
+        directReportOfAgentId: input.principalType === "agent" ? input.principalId : undefined,
       }))
     ) {
       return deny({
@@ -1493,14 +1506,16 @@ export function authorizationService(db: Db) {
     async function decideWithAgentConfigReadGrant(
       principalType: PrincipalType,
       principalId: string,
+      targetAgentId?: string,
     ): Promise<AuthorizationDecision> {
+      const targetScope = targetAgentId ? { targetAgentId } : input.scope;
       const configureDecision = await decidePrincipalGrant({
         companyId,
         principalType,
         principalId,
         action: input.action,
         permissionKey: "agents:configure",
-        scope: input.scope,
+        scope: targetScope,
       });
       if (configureDecision.allowed || configureDecision.reason === "deny_missing_membership") {
         return configureDecision;
@@ -1512,7 +1527,7 @@ export function authorizationService(db: Db) {
         principalId,
         action: input.action,
         permissionKey: "agents:suggest-changes",
-        scope: input.scope,
+        scope: targetScope,
       });
       if (suggestDecision.allowed || suggestDecision.reason === "deny_missing_grant") {
         return suggestDecision;
@@ -1525,13 +1540,14 @@ export function authorizationService(db: Db) {
       principalId: string,
       keys: { direct: PermissionKey; suggest: PermissionKey },
     ): Promise<AuthorizationDecision> {
+      const targetAgentId = input.resource.type === "agent" ? input.resource.agentId : undefined;
       const directDecision = await decidePrincipalGrant({
         companyId,
         principalType,
         principalId,
         action: input.action,
         permissionKey: keys.direct,
-        scope: input.scope,
+        scope: targetAgentId ? { ...input.scope, targetAgentId } : input.scope,
       });
       if (directDecision.allowed) {
         return allow({
@@ -1549,7 +1565,7 @@ export function authorizationService(db: Db) {
         principalId,
         action: input.action,
         permissionKey: keys.suggest,
-        scope: input.scope,
+        scope: targetAgentId ? { ...input.scope, targetAgentId } : input.scope,
       });
       if (suggestDecision.allowed) {
         if (scopeBoolean(input.scope, "consentedChange")) {
@@ -1701,7 +1717,11 @@ export function authorizationService(db: Db) {
         }
       }
       if (input.action === "agent_config:read") {
-        return decideWithAgentConfigReadGrant("user", input.actor.userId);
+        return decideWithAgentConfigReadGrant(
+          "user",
+          input.actor.userId ?? undefined,
+          input.resource.type === "agent" ? input.resource.agentId ?? undefined : undefined,
+        );
       }
       if (input.action === "agent_config:update") {
         return decideWithProtectedChangeGrants("user", input.actor.userId, {
@@ -2191,7 +2211,11 @@ export function authorizationService(db: Db) {
           explanation: "Allowed because the actor is reading its own agent configuration.",
         });
       }
-      return decideWithAgentConfigReadGrant("agent", actorAgentId);
+      return decideWithAgentConfigReadGrant(
+        "agent",
+        actorAgentId,
+        input.resource.type === "agent" ? input.resource.agentId ?? undefined : undefined,
+      );
     }
 
     if (input.action === "agent_config:update") {

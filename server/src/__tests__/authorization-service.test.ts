@@ -250,6 +250,72 @@ describeEmbeddedPostgres("authorization service", () => {
     });
   });
 
+  it("limits direct-report config-read grants to the explicit live relationship and preserves suggest consent", async () => {
+    const company = await createCompany(db, "DirectReportConfigReadGrant");
+    const manager = await createAgent(db, company.id);
+    const directReport = await createAgent(db, company.id, { reportsTo: manager.id });
+    const unrelatedAgent = await createAgent(db, company.id);
+    await grantAgentPermission(db, company.id, manager.id, "agents:suggest-changes", {
+      directReportAgentIds: [directReport.id],
+    });
+    const actor = { type: "agent" as const, agentId: manager.id, companyId: company.id, source: "agent_key" as const };
+    const authz = authorizationService(db);
+
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:read",
+      resource: { type: "agent", companyId: company.id, agentId: directReport.id },
+    })).resolves.toMatchObject({
+      allowed: true,
+      reason: "allow_explicit_grant",
+      grant: { permissionKey: "agents:suggest-changes", scope: { directReportAgentIds: [directReport.id] } },
+    });
+
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:read",
+      resource: { type: "agent", companyId: company.id, agentId: unrelatedAgent.id },
+    })).resolves.toMatchObject({ allowed: false });
+
+    // The scoped grant cannot be used for a company-wide configuration listing.
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:read",
+      resource: { type: "company", companyId: company.id },
+    })).resolves.toMatchObject({ allowed: false });
+
+    // Suggest-tier access is not direct mutation authority and still requires
+    // the existing accepted-change-consent signal.
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: company.id, agentId: directReport.id },
+      scope: { requiresChangeGrant: true },
+    })).resolves.toMatchObject({ allowed: false, reason: "deny_missing_consent" });
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: company.id, agentId: directReport.id },
+      scope: { requiresChangeGrant: true, consentedChange: true },
+    })).resolves.toMatchObject({ allowed: true, reason: "allow_consented_change" });
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: company.id, agentId: unrelatedAgent.id },
+      scope: { requiresChangeGrant: true, consentedChange: true },
+    })).resolves.toMatchObject({ allowed: false });
+
+    // Re-parenting the target revokes the grant's direct-report semantics
+    // without needing a stale-grant cleanup job.
+    const otherManager = await createAgent(db, company.id);
+    await db.update(agents).set({ reportsTo: otherManager.id }).where(eq(agents.id, directReport.id));
+    await expect(authz.decide({
+      actor,
+      action: "agent_config:read",
+      resource: { type: "agent", companyId: company.id, agentId: directReport.id },
+    })).resolves.toMatchObject({ allowed: false });
+  });
+
   it("falls back to the direct config-read grant decision when a suggest read grant is scoped away", async () => {
     const company = await createCompany(db, "AgentReadScopedSuggestGrant");
     const actorAgent = await createAgent(db, company.id);
